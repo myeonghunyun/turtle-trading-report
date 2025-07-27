@@ -1,5 +1,4 @@
 # 민감한 파일 보호
-config.py
 __pycache__/
 *.pyc
 .DS_Store
