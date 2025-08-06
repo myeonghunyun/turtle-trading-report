@@ -20,7 +20,7 @@ jobs:
     - name: Install TA-Lib dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libta-lib-dev
+        sudo apt-get install -y ta-lib
 
     - name: Install dependencies
       run: |
