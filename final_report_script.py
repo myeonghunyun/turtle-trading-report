@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import smtplib
 from email.mime.text import MIMEText
-import talib
+import pandas_ta as ta  # ✅ talib 대신 pandas-ta 사용
 
 # ----------------- 설정값 -----------------
 TOTAL_SEED_KRW = 100000000  # 총 자금 1억 원
@@ -14,6 +14,9 @@ ADX_THRESHOLD = 19          # ADX > 19면 추세 강함
 # ------------------------------------------
 
 def get_index_tickers(index_name):
+    """
+    Wikipedia에서 S&P 500 또는 Nasdaq-100 티커 추출
+    """
     if index_name == 'sp500':
         url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
         possible_cols = ['Symbol', 'Ticker symbol', 'Ticker']
@@ -39,35 +42,40 @@ def get_index_tickers(index_name):
 
 
 def get_turtle_signal(ticker_data, vix_value):
+    """
+    터틀 트레이딩 신호 계산 (pandas-ta 사용)
+    """
     try:
         ticker_data = ticker_data.ffill().dropna()
         if ticker_data.empty or len(ticker_data) < 200:
             return "데이터 부족", {}
 
-        high_arr = ticker_data['High'].values
-        low_arr = ticker_data['Low'].values
-        close_arr = ticker_data['Close'].values
-        volume_arr = ticker_data['Volume'].values
+        # pandas-ta로 지표 계산
+        ticker_data['ATR'] = ta.atr(ticker_data['High'], ticker_data['Low'], ticker_data['Close'], length=20)
+        adx_series = ta.adx(ticker_data['High'], ticker_data['Low'], ticker_data['Close'], length=14)
+        if adx_series is not None and not adx_series.empty:
+            ticker_data['ADX'] = adx_series['ADX_14']
+            ticker_data['+DI'] = adx_series['DMP_14']
+            ticker_data['-DI'] = adx_series['DMN_14']
+        ticker_data['MA200'] = ta.sma(ticker_data['Close'], length=200)
 
-        # 지표 계산
-        atr = talib.ATR(high_arr, low_arr, close_arr, timeperiod=20)
-        adx = talib.ADX(high_arr, low_arr, close_arr, timeperiod=14)
-        plus_di = talib.PLUS_DI(high_arr, low_arr, close_arr, timeperiod=14)
-        minus_di = talib.MINUS_DI(high_arr, low_arr, close_arr, timeperiod=14)
-        ma200 = talib.MA(close_arr, timeperiod=200)
+        # 마지막 값 추출
+        last_row = ticker_data.iloc[-1]
+        if last_row.isnull().any():
+            return "분석 오류", {}
 
-        last_close = close_arr[-1]
-        last_volume = volume_arr[-1]
-        last_atr = atr[-1]
-        last_adx = adx[-1]
-        last_plus_di = plus_di[-1]
-        last_minus_di = minus_di[-1]
-        last_ma200 = ma200[-1] if len(ma200) > 0 and not np.isnan(ma200[-1]) else 0
+        last_close = last_row['Close']
+        last_volume = ticker_data['Volume'].iloc[-1]
+        last_atr = last_row['ATR']
+        last_adx = last_row['ADX'] if pd.notna(last_row['ADX']) else 0
+        last_plus_di = last_row['+DI'] if pd.notna(last_row['+DI']) else 0
+        last_minus_di = last_row['-DI'] if pd.notna(last_row['-DI']) else 0
+        last_ma200 = last_row['MA200'] if pd.notna(last_row['MA200']) else 0
 
         # 20일 신고가 (어제 기준)
-        last_20_high_prev = np.max(high_arr[-21:-1]) if len(high_arr) >= 21 else last_close
+        last_20_high_prev = ticker_data['High'].rolling(20).max().iloc[-2] if len(ticker_data) >= 21 else last_close
         # 10일 저가 (오늘 기준)
-        last_10_low = np.min(low_arr[-10:]) if len(low_arr) >= 10 else last_close
+        last_10_low = ticker_data['Low'].rolling(10).min().iloc[-1] if len(ticker_data) >= 10 else last_close
 
         # 평균 거래량 (20일)
         avg_volume_20d = ticker_data['Volume'].rolling(window=20).mean().iloc[-1]
@@ -119,7 +127,7 @@ def get_turtle_signal(ticker_data, vix_value):
 
         if buy_condition:
             signal = "BUY"
-            indicators["signal_strength"] = last_adx - atr_ratio  # ADX 높고 ATR 낮을수록 강함
+            indicators["signal_strength"] = last_adx - atr_ratio  # 강한 신호 우선
         elif not is_above_ma200 or last_adx < ADX_THRESHOLD or last_close < last_10_low:
             signal = "SELL"
             indicators["signal_strength"] = -last_adx
@@ -130,6 +138,7 @@ def get_turtle_signal(ticker_data, vix_value):
         return signal, indicators
 
     except Exception as e:
+        print(f"❌ 분석 중 오류: {e}")
         return "오류", {}
 
 
@@ -179,7 +188,7 @@ if __name__ == '__main__':
         print(f"❌ 데이터 다운로드 실패: {e}")
         exit()
 
-    # A++ 종목 선별 (나만의 기준)
+    # A++ 종목 선별
     a_plus_plus_list = []
 
     def is_a_plus_plus(ind):
@@ -211,10 +220,10 @@ if __name__ == '__main__':
                     'stop_krw': ind['손절가'],
                     'quantity': ind['매수가능수량']
                 })
-        except:
+        except Exception as e:
             continue
 
-    # A++ 종목을 ATR비율 낮은 순으로 정렬 (안정적인 순)
+    # A++ 종목을 ATR비율 낮은 순으로 정렬
     a_plus_plus_list = sorted(a_plus_plus_list, key=lambda x: x['atr_ratio'])
 
     def format_krw(amount):
@@ -302,7 +311,6 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         buy_signals = sorted(buy_signals, key=lambda x: x['atr_ratio'])
         sell_signals = sorted(sell_signals, key=lambda x: x['atr_ratio'])
 
-        # 섹션 제목에 수량 표시
         section = f"<h2>[{name}: 티커 {len(ticker_list)}개, 매수 {len(buy_signals)}개, 매도 {len(sell_signals)}개]</h2>"
 
         buy_html = ""
