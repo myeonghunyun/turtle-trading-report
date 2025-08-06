@@ -2,7 +2,7 @@ name: Daily Turtle Trading Report
 
 on:
   schedule:
-    - cron: '0 22 * * *'  # UTC 기준 22:00 = 한국 시간 익일 오전 7:00
+    - cron: '0 22 * * *'  # UTC 22:00 = 한국 시간 익일 오전 7:00
   workflow_dispatch:
 
 jobs:
@@ -17,22 +17,10 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Install TA-Lib C Library (Manual Build)
-      run: |
-        # 1. TA-Lib 소스 다운로드
-        wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
-        tar -xzf ta-lib-0.4.0-src.tar.gz
-        
-        # 2. 컴파일 및 설치
-        cd ta-lib/
-        ./configure --prefix=/usr/local
-        make
-        sudo make install
-
-    - name: Install Python dependencies
+    - name: Install Python dependencies (using pandas-ta instead of TA-Lib)
       run: |
         pip install --upgrade pip
-        pip install yfinance pandas numpy TA-Lib
+        pip install yfinance pandas numpy pandas-ta lxml
 
     - name: Run Python script
       env:
