@@ -23,4 +23,4 @@ jobs:
         GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
       run: |
-        python turtle_trading_final.py
+        python final_report_script.py
