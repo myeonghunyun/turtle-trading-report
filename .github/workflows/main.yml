@@ -17,7 +17,7 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Install Python dependencies (using pandas-ta instead of TA-Lib)
+    - name: Install dependencies
       run: |
         pip install --upgrade pip
         pip install yfinance pandas numpy pandas-ta lxml
