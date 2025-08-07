@@ -255,7 +255,48 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     </pre>
     """
 
-    # ✅ A++ 종목 섹션 추가
+    # ✅ 실전 거래량 비율 판단 가이드 추가 (A++ 전에 위치)
+    report_body += """
+    <h2>📌 실전 거래량 비율 판단 가이드</h2>
+    <p><b>거래량비율</b>은 "오늘 거래량이 평소보다 몇 배 늘었는가?"를 보여줍니다.<br/>
+    이 수치는 시장의 관심과 변동성의 전조를 파악하는 핵심 지표입니다.</p>
+    
+    <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; font-size: 14px;">
+        <tr style="background-color: #f2f2f2;">
+            <th>거래량비율</th>
+            <th>시장 의미</th>
+            <th>실전 판단</th>
+        </tr>
+        <tr>
+            <td>< 1.0x</td>
+            <td>거래 위축</td>
+            <td>관심이 줄고 있음. 추세 약화 가능성 있음</td>
+        </tr>
+        <tr>
+            <td>1.0~1.5x</td>
+            <td>보통 수준</td>
+            <td>특별한 움직임 없음. 보유 관찰</td>
+        </tr>
+        <tr>
+            <td>1.5~2.0x</td>
+            <td>주목 필요</td>
+            <td>상승/하락 모멘텀 시작 가능성 ↑</td>
+        </tr>
+        <tr>
+            <td>> 2.0x</td>
+            <td>강한 관심</td>
+            <td>급등/급락 전조. 진입 또는 이탈 고려</td>
+        </tr>
+        <tr>
+            <td>> 3.0x</td>
+            <td>폭발적 관심</td>
+            <td>뉴스, 실적 발표 등 외부 요인 가능성 높음</td>
+        </tr>
+    </table>
+    <p><b>💡 팁:</b> A++ 종목은 <b>거래량비율 > 1.5x</b>를 충족해야 합니다.</p>
+    """
+
+    # ✅ A++ 종목 섹션 추가 (실전 가이드 다음에 위치)
     if a_plus_plus_list:
         report_body += "<h2>🌟 나만의 A++ 추천 종목 (고성과 + 안정성)</h2><ul>"
         for s in a_plus_plus_list:
@@ -334,47 +375,6 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
 
     report_body += generate_section(sp500_tickers, "S&P500")
     report_body += generate_section(nasdaq100_tickers, "NASDAQ100")
-
-    # ✅ 실전 판단 기준 추가
-    report_body += """
-    <h2>📌 실전 거래량 비율 판단 가이드</h2>
-    <p><b>거래량비율</b>은 "오늘 거래량이 평소보다 몇 배 늘었는가?"를 보여줍니다.<br/>
-    이 수치는 시장의 관심과 변동성의 전조를 파악하는 핵심 지표입니다.</p>
-    
-    <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; font-size: 14px;">
-        <tr style="background-color: #f2f2f2;">
-            <th>거래량비율</th>
-            <th>시장 의미</th>
-            <th>실전 판단</th>
-        </tr>
-        <tr>
-            <td>< 1.0x</td>
-            <td>거래 위축</td>
-            <td>관심이 줄고 있음. 추세 약화 가능성 있음</td>
-        </tr>
-        <tr>
-            <td>1.0~1.5x</td>
-            <td>보통 수준</td>
-            <td>특별한 움직임 없음. 보유 관찰</td>
-        </tr>
-        <tr>
-            <td>1.5~2.0x</td>
-            <td>주목 필요</td>
-            <td>상승/하락 모멘텀 시작 가능성 ↑</td>
-        </tr>
-        <tr>
-            <td>> 2.0x</td>
-            <td>강한 관심</td>
-            <td>급등/급락 전조. 진입 또는 이탈 고려</td>
-        </tr>
-        <tr>
-            <td>> 3.0x</td>
-            <td>폭발적 관심</td>
-            <td>뉴스, 실적 발표 등 외부 요인 가능성 높음</td>
-        </tr>
-    </table>
-    <p><b>💡 팁:</b> A++ 종목은 <b>거래량비율 > 1.5x</b>를 충족해야 합니다.</p>
-    """
 
     subject = f"📈 터틀 트레이딩 리포트 (VIX: {vix_value:.1f})"
     send_email(subject, report_body)
