@@ -14,9 +14,6 @@ ADX_THRESHOLD = 19          # ADX > 19면 추세 강함
 # ------------------------------------------
 
 def get_index_tickers(index_name):
-    """
-    Wikipedia에서 S&P 500 또는 Nasdaq-100 티커 추출
-    """
     if index_name == 'sp500':
         url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
         possible_cols = ['Symbol', 'Ticker symbol', 'Ticker']
@@ -42,9 +39,6 @@ def get_index_tickers(index_name):
 
 
 def get_turtle_signal(ticker_data, vix_value):
-    """
-    터틀 트레이딩 신호 계산 (pandas-ta 사용)
-    """
     try:
         ticker_data = ticker_data.ffill().dropna()
         if ticker_data.empty or len(ticker_data) < 200:
@@ -127,7 +121,7 @@ def get_turtle_signal(ticker_data, vix_value):
 
         if buy_condition:
             signal = "BUY"
-            indicators["signal_strength"] = last_adx - atr_ratio  # 강한 신호 우선
+            indicators["signal_strength"] = last_adx - atr_ratio
         elif not is_above_ma200 or last_adx < ADX_THRESHOLD or last_close < last_10_low:
             signal = "SELL"
             indicators["signal_strength"] = -last_adx
@@ -218,7 +212,8 @@ if __name__ == '__main__':
                     'atr_ratio': ind['ATR비율'],
                     'target_krw': ind['목표가'],
                     'stop_krw': ind['손절가'],
-                    'quantity': ind['매수가능수량']
+                    'quantity': ind['매수가능수량'],
+                    'volume_ratio': ind['거래량비율']
                 })
         except Exception as e:
             continue
@@ -266,7 +261,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         for s in a_plus_plus_list:
             report_body += f"""
             <li><b>{s['ticker']}</b>: A++ 종목 (종가 {format_price(s['close_krw'])}, 
-            거래량 {format_krw(s['volume_krw'])}, ATR비율 {s['atr_ratio']:.2f}%,
+            거래량 {format_krw(s['volume_krw'])}, 거래량비율 {s['volume_ratio']:.1f}x, ATR비율 {s['atr_ratio']:.2f}%,
             목표가 {format_price(s['target_krw'])}, 손절가 {format_price(s['stop_krw'])})
             → <b>매수 가능 수량: {s['quantity']:,}주</b></li>
             """
@@ -296,14 +291,16 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
                         'volume_krw': ind['거래량_krw_billion'],
                         'atr_ratio': ind['ATR비율'],
                         'target_krw': ind['목표가'],
-                        'stop_krw': ind['손절가']
+                        'stop_krw': ind['손절가'],
+                        'volume_ratio': ind['거래량비율']
                     })
                 elif signal == "SELL":
                     sell_signals.append({
                         'ticker': ticker,
                         'close_krw': ind['종가_krw'],
                         'volume_krw': ind['거래량_krw_billion'],
-                        'atr_ratio': ind['ATR비율']
+                        'atr_ratio': ind['ATR비율'],
+                        'volume_ratio': ind['거래량비율']
                     })
             except:
                 continue
@@ -317,8 +314,8 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         for s in buy_signals:
             buy_html += f"""
             <li><b>{s['ticker']}</b>: 매수 
-                (종가 {format_price(s['close_krw'])}, 거래량 {format_krw(s['volume_krw'])}, ATR비율 {s['atr_ratio']:.2f}%,
-                목표가 {format_price(s['target_krw'])}, 손절가 {format_price(s['stop_krw'])})
+                (종가 {format_price(s['close_krw'])}, 거래량 {format_krw(s['volume_krw'])}, 거래량비율 {s['volume_ratio']:.1f}x, 
+                ATR비율 {s['atr_ratio']:.2f}%, 목표가 {format_price(s['target_krw'])}, 손절가 {format_price(s['stop_krw'])})
             </li>
             """
 
@@ -326,7 +323,8 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         for s in sell_signals:
             sell_html += f"""
             <li><b>{s['ticker']}</b>: 매도 
-                (종가 {format_price(s['close_krw'])}, 거래량 {format_krw(s['volume_krw'])}, ATR비율 {s['atr_ratio']:.2f}%)
+                (종가 {format_price(s['close_krw'])}, 거래량 {format_krw(s['volume_krw'])}, 거래량비율 {s['volume_ratio']:.1f}x, 
+                ATR비율 {s['atr_ratio']:.2f}%)
             </li>
             """
 
@@ -336,6 +334,47 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
 
     report_body += generate_section(sp500_tickers, "S&P500")
     report_body += generate_section(nasdaq100_tickers, "NASDAQ100")
+
+    # ✅ 실전 판단 기준 추가
+    report_body += """
+    <h2>📌 실전 거래량 비율 판단 가이드</h2>
+    <p><b>거래량비율</b>은 "오늘 거래량이 평소보다 몇 배 늘었는가?"를 보여줍니다.<br/>
+    이 수치는 시장의 관심과 변동성의 전조를 파악하는 핵심 지표입니다.</p>
+    
+    <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; font-size: 14px;">
+        <tr style="background-color: #f2f2f2;">
+            <th>거래량비율</th>
+            <th>시장 의미</th>
+            <th>실전 판단</th>
+        </tr>
+        <tr>
+            <td>< 1.0x</td>
+            <td>거래 위축</td>
+            <td>관심이 줄고 있음. 추세 약화 가능성 있음</td>
+        </tr>
+        <tr>
+            <td>1.0~1.5x</td>
+            <td>보통 수준</td>
+            <td>특별한 움직임 없음. 보유 관찰</td>
+        </tr>
+        <tr>
+            <td>1.5~2.0x</td>
+            <td>주목 필요</td>
+            <td>상승/하락 모멘텀 시작 가능성 ↑</td>
+        </tr>
+        <tr>
+            <td>> 2.0x</td>
+            <td>강한 관심</td>
+            <td>급등/급락 전조. 진입 또는 이탈 고려</td>
+        </tr>
+        <tr>
+            <td>> 3.0x</td>
+            <td>폭발적 관심</td>
+            <td>뉴스, 실적 발표 등 외부 요인 가능성 높음</td>
+        </tr>
+    </table>
+    <p><b>💡 팁:</b> A++ 종목은 <b>거래량비율 > 1.5x</b>를 충족해야 합니다.</p>
+    """
 
     subject = f"📈 터틀 트레이딩 리포트 (VIX: {vix_value:.1f})"
     send_email(subject, report_body)
