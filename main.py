@@ -9,6 +9,7 @@ import time
 from curl_cffi import requests as curl_requests
 import sys
 import io
+import numpy as np
 
 # ----------------- 설정값 -----------------
 TOTAL_SEED_KRW = 100000000  # 총 자금 1억 원
@@ -210,9 +211,9 @@ def read_positions_file(file_path='positions.csv'):
     return pd.read_csv(file_path)
 
 def backtest_strategy(ticker_data, dynamic_adx_threshold):
-    """단순 백테스팅을 통해 전략의 수익률을 계산합니다."""
+    """단순 백테스팅을 통해 전략의 수익률과 최대 낙폭(MDD)을 계산합니다."""
     if ticker_data.empty or len(ticker_data) < 250:
-        return None
+        return None, None
 
     signals = pd.DataFrame(index=ticker_data.index)
     signals['Close'] = ticker_data['Close']
@@ -258,8 +259,13 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
 
     if not signals['Strategy'].empty:
         total_return = (signals['Strategy'].iloc[-1] - 1) * 100
-        return total_return
-    return None
+        
+        cumulative_returns = signals['Strategy']
+        peak = cumulative_returns.expanding(min_periods=1).max()
+        drawdown = (cumulative_returns - peak) / peak
+        max_drawdown = drawdown.min() * 100 if not drawdown.empty else 0
+        return total_return, max_drawdown
+    return None, None
 
 # ================ 메인 실행 ==================
 if __name__ == '__main__':
@@ -300,8 +306,7 @@ if __name__ == '__main__':
     elif vix_value >= 30:
         dynamic_atr_upper_limit = 4.0
 
-    # PER 데이터 가져오기 시도
-    forward_pe = 22.4 
+    forward_pe = 22.4
     try:
         sp500_info = yf.Ticker('^GSPC').info
         if 'forwardPE' in sp500_info and sp500_info['forwardPE'] is not None:
@@ -320,10 +325,9 @@ if __name__ == '__main__':
         print("❌ 티커 목록이 비어 있습니다. 프로그램을 종료합니다.")
         sys.exit(1)
 
-    # 포트폴리오 파일에서 보유 종목 정보 불러오기
     positions_df = read_positions_file()
     positions_dict = {row['ticker']: row for _, row in positions_df.iterrows()}
-
+    
     data = {}
     failed_tickers = []
     print(f"📊 총 {len(all_tickers)}개 종목 데이터 다운로드 중...")
@@ -376,7 +380,6 @@ if __name__ == '__main__':
             price_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
             sector = get_ticker_sector(ticker)
             
-            # 보유 종목인지 확인
             is_holding = ticker in positions_dict
             last_buy_price = positions_dict[ticker]['buy_price'] if is_holding else None
             units = positions_dict[ticker]['units'] if is_holding else 0
@@ -411,16 +414,12 @@ if __name__ == '__main__':
 
     a_plus_plus_list = sorted(a_plus_plus_list, key=lambda x: x['atr_ratio'])
     
-    # A++ 종목에 대해서만 백테스팅 실행
-    a_plus_plus_tickers = [item['ticker'] for item in a_plus_plus_list]
     backtest_results = {}
-    for ticker in a_plus_plus_tickers:
-        try:
-            result = backtest_strategy(data[ticker], dynamic_adx_threshold)
-            if result is not None:
-                backtest_results[ticker] = result
-        except Exception as e:
-            print(f"⚠️ {ticker} 백테스팅 오류: {e}")
+    for ticker_data in a_plus_plus_list:
+        ticker = ticker_data['ticker']
+        result, mdd = backtest_strategy(data[ticker], dynamic_adx_threshold)
+        if result is not None:
+            backtest_results[ticker] = {'return': result, 'mdd': mdd}
 
     if REPORT_TYPE == "morning_plan":
         title = "🌅 [계획용] 오전 7시 터틀 트레이딩 리포트"
@@ -625,20 +624,21 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     else:
         report_body += "<h2>🌟 나만의 A++ 추천 종목</h2><p>현재 기준에 맞는 A++ 종목이 없습니다.</p><hr><br/>"
         
-    # 백테스팅 결과 추가 (A++ 종목만)
+    backtest_results = {}
+    for ticker_data in a_plus_plus_list:
+        ticker = ticker_data['ticker']
+        result, mdd = backtest_strategy(data[ticker], dynamic_adx_threshold)
+        if result is not None:
+            backtest_results[ticker] = {'return': result, 'mdd': mdd}
+
     if backtest_results:
         report_body += "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2>"
-        report_body += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; font-size: 14px;'><tr><th>종목</th><th>수익률</th><th>의미</th></tr>"
+        report_body += "<p>※ 백테스팅 결과는 과거 성과이며, 미래 수익률을 보장하지 않습니다.</p>"
+        report_body += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; font-size: 14px;'>"
+        report_body += "<tr><th>종목</th><th>수익률</th><th>최대 낙폭(MDD)</th></tr>"
         
         for ticker, result in backtest_results.items():
-            if result > 0:
-                meaning = "긍정적 성과 (지난 1년간 이 전략 적용 시 수익)"
-            elif result < 0:
-                meaning = "부정적 성과 (지난 1년간 이 전략 적용 시 손실)"
-            else:
-                meaning = "중립적 성과 (진입 조건 불부합 또는 데이터 부족)"
-            
-            report_body += f"<tr><td><b>{ticker}</b></td><td>{result:.2f}%</td><td>{meaning}</td></tr>"
+            report_body += f"<tr><td><b>{ticker}</b></td><td>{result['return']:.2f}%</td><td>{result['mdd']:.2f}%</td></tr>"
         
         report_body += "</table>"
     else:
