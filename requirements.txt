@@ -3,3 +3,4 @@ pandas
 pandas-ta==0.3.14b0
 curl_cffi
 numpy==1.26.4
+lxml
