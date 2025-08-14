@@ -12,7 +12,7 @@ import io
 import numpy as np
 
 # ----------------- 설정값 -----------------
-TOTAL_SEED_KRW = 100000000  # 총 자금 1억 원
+TOTAL_SEED_USD = 72831  # 총 자금 약 1억 원을 달러로 환산 (약 1373원/달러 기준)
 MAX_LOSS_RATE = 0.01        # 최대 손실 비율 1%
 VOLUME_THRESHOLD = 1.5      # 거래량 비율 기준 (수정: 기준 강화)
 ADX_THRESHOLD = 19          # ADX > 19면 추세 강함 (동적 조절 기본값)
@@ -50,7 +50,7 @@ def get_index_tickers(index_name):
         print(f"❌ {index_name} 티커 추출 실패: {e}")
         return []
 
-def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
+def get_turtle_signal(ticker, ticker_data, vix_value, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
     """단일 종목에 대한 터틀 트레이딩 신호를 계산합니다."""
     try:
         if not isinstance(ticker_data, pd.DataFrame) or ticker_data.empty:
@@ -98,7 +98,7 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx
         disparity_rate = (last_close - last_ma200) / last_ma200 * 100 if last_ma200 > 0 else 0
         atr_ratio = (last_atr / last_close) * 100 if last_close > 0 else 0
 
-        max_loss_usd = (TOTAL_SEED_KRW * MAX_LOSS_RATE) / exchange_rate
+        max_loss_usd = TOTAL_SEED_USD * MAX_LOSS_RATE
         loss_per_share = last_atr * 2
         buy_quantity = int(max_loss_usd / loss_per_share) if loss_per_share > 0 else 0
         
@@ -106,30 +106,28 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx
         target_price = last_close + (2 * last_atr)
 
         if units > 0 and last_buy_price is not None:
-            # 포트폴리오 보유 종목의 손절/피라미딩 신호 계산
             stop_price_portfolio = last_buy_price - (2 * last_atr)
             pyramid_price = last_buy_price + (0.5 * last_atr)
             
             if last_close < stop_price_portfolio or last_close < last_10_low:
                 return "SELL", {
-                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
-                    "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
+                    "종가": last_close, "ATR": last_atr,
+                    "손절가": stop_price_portfolio,
                     "매수포함": True
                 }
             elif last_close > pyramid_price and units < MAX_UNITS:
                 return "PYRAMID_BUY", {
-                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
-                    "추가매수가": round(pyramid_price * exchange_rate, 0), "추가매수가_usd": pyramid_price,
+                    "종가": last_close, "ATR": last_atr,
+                    "추가매수가": pyramid_price,
                     "매수포함": True
                 }
             else:
                 return "보유", {
-                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
-                    "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
+                    "종가": last_close, "ATR": last_atr,
+                    "손절가": stop_price_portfolio,
                     "매수포함": True
                 }
 
-        # 신규 매수 신호 계산
         is_above_ma200 = last_close > last_ma200
         initial_buy_condition = (
             last_close > last_20_high_prev and
@@ -151,11 +149,11 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx
             signal = "보유"
 
         indicators = {
-            "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "거래량_krw_billion": (last_volume * last_close * exchange_rate) / 1e8,
+            "종가": last_close, "거래량": last_volume, "거래량_bil": (last_volume * last_close) / 1e9,
             "ATR": last_atr, "ATR비율": atr_ratio, "MA200": last_ma200, "괴리율": disparity_rate,
             "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di, "거래량비율": volume_ratio,
-            "손절가": round(stop_price * exchange_rate, 0), "목표가": round(target_price * exchange_rate, 0), "매수가능수량": buy_quantity, "RSI": last_rsi,
-            "손절가_usd": stop_price, "목표가_usd": target_price, "매수포함": False
+            "손절가": stop_price, "목표가": target_price, "매수가능수량": buy_quantity, "RSI": last_rsi,
+            "매수포함": False
         }
 
         return signal, indicators
@@ -164,19 +162,11 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx
         print(f"❌ {ticker} 분석 중 오류: {e}")
         return "오류", {}
 
-def format_krw(amount):
-    """금액을 '만원' 또는 '억원' 단위로 포맷팅합니다."""
-    if amount >= 100000000:
-        return f"{amount / 100000000:,.1f}억원"
-    else:
-        return f"{amount / 10000:,.0f}만원"
-
 def send_email(subject, body):
     """리포트를 이메일로 전송합니다."""
     sender_email = os.getenv("SENDER_EMAIL")
     sender_password = os.getenv("GMAIL_APP_PASSWORD")
     
-    # ✅ 여러 수신자 이메일 처리
     receiver_emails_str = os.getenv("RECEIVER_EMAIL")
     if not receiver_emails_str:
         print("❌ 이메일 설정이 누락되었습니다. Secrets를 확인하세요.")
@@ -192,12 +182,12 @@ def send_email(subject, body):
     msg = MIMEText(body_clean, 'html', _charset='utf-8')
     msg['Subject'] = subject
     msg['From'] = sender_email
-    msg['To'] = receiver_emails_str  # To 헤더에는 쉼표로 구분된 문자열 그대로 사용
+    msg['To'] = receiver_emails_str
 
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(sender_email, sender_password)
-            server.sendmail(sender_email, receiver_emails, msg.as_string()) # sendmail에는 리스트로 전달
+            server.sendmail(sender_email, receiver_emails, msg.as_string())
         print("✅ 이메일이 성공적으로 전송되었습니다.")
     except Exception as e:
         print(f"❌ 이메일 전송 실패: {e}")
@@ -606,7 +596,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
             for s in pyramid_signals:
                 report_body += f"""
                 <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 추가 매수 조건 충족
-                (현재가 {format_krw(s['close_krw'])}, 추가 매수 가격 {format_krw(s['pyramid_price_krw'])})</li>
+                (현재가 ${s['close']:.2f}, 추가 매수 가격 ${s['pyramid_price_usd']:.2f})</li>
                 """
             report_body += "</ul>"
         if sell_signals:
@@ -614,7 +604,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
             for s in sell_signals:
                 report_body += f"""
                 <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 손절/익절 조건 충족
-                (현재가 {format_krw(s['close_krw'])}, 손절가 {format_krw(s['stop_price_krw'])})</li>
+                (현재가 ${s['close']:.2f}, 손절가 ${s['stop_price_usd']:.2f})</li>
                 """
             report_body += "</ul>"
         report_body += "<hr><br/>"
@@ -623,10 +613,10 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         report_body += "<h2>🌟 나만의 A++ 추천 종목 (고성과 + 안정성)</h2><ul>"
         for s in a_plus_plus_list:
             report_body += f"""
-            <li><b>{s['ticker']}</b> ({s['sector']}): A++ 종목 (종가 ${s['close']:.2f} ({format_krw(s['close_krw'])}),
-            거래량 {format_krw(s['volume_krw'])}, 거래량비율 {s['volume_ratio']:.1f}x, ATR비율 {s['atr_ratio']:.2f}%,
+            <li><b>{s['ticker']}</b> ({s['sector']}): A++ 종목 (종가 ${s['close']:.2f},
+            거래량 ${s['volume_bil']:.2f}B, 거래량비율 {s['volume_ratio']:.1f}x, ATR비율 {s['atr_ratio']:.2f}%,
             RSI {s['RSI']:.2f},
-            목표가 ${s['target']:.2f} ({format_krw(s['target_krw'])}), 손절가 ${s['stop']:.2f} ({format_krw(s['stop_krw'])}))
+            목표가 ${s['target']:.2f}, 손절가 ${s['stop']:.2f})
             → <b>매수 가능 수량: {s['quantity']:,}주</b></li>
             """
         report_body += "</ul><hr><br/>"
@@ -652,6 +642,6 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         report_body += "</table>"
     else:
         report_body += "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2><p>A++ 종목이 없어 백테스팅을 실행할 수 없습니다.</p>"
-    
+
     send_email(subject, report_body)
     print("✅ 리포트 생성 및 전송 완료!")
