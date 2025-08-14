@@ -26,7 +26,6 @@ def read_settings(file_path='settings.txt'):
             key, value = line.split('=')
             settings[key.strip()] = value.strip()
             
-    # 값의 자료형을 변환하여 반환
     try:
         return {
             'TOTAL_SEED_KRW': int(settings['TOTAL_SEED_KRW']),
@@ -53,7 +52,6 @@ ADX_THRESHOLD = SETTINGS['ADX_THRESHOLD']
 ATR_UPPER_LIMIT = SETTINGS['ATR_UPPER_LIMIT']
 SECTOR_LIMIT = SETTINGS['SECTOR_LIMIT']
 FORWARD_PER = SETTINGS['FORWARD_PER']
-
 MAX_UNITS = 4
 
 def get_index_tickers(index_name):
@@ -85,7 +83,7 @@ def get_index_tickers(index_name):
         print(f"❌ {index_name} 티커 추출 실패: {e}")
         return []
 
-def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
+def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
     """단일 종목에 대한 터틀 트레이딩 신호를 계산합니다."""
     try:
         if not isinstance(ticker_data, pd.DataFrame) or ticker_data.empty:
@@ -194,7 +192,7 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx
         return signal, indicators
 
     except Exception as e:
-        print(f"❌ {ticker} 분석 중 오류: {e}")
+        print(f"❌ 분석 중 오류: {e}")
         return "오류", {}
 
 def format_krw(amount):
@@ -426,7 +424,8 @@ if __name__ == '__main__':
             last_buy_price = positions_dict[ticker]['buy_price'] if is_holding else None
             units = positions_dict[ticker]['units'] if is_holding else 0
 
-            signal, ind = get_turtle_signal(ticker, price_data, vix_value, EXCHANGE_RATE_KRW_USD, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=last_buy_price, units=units)
+            # ✅ 함수 호출 시 인자 수정
+            signal, ind = get_turtle_signal(price_data, vix_value, EXCHANGE_RATE_KRW_USD, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=last_buy_price, units=units)
 
             if is_holding:
                 if signal == "PYRAMID_BUY":
@@ -451,7 +450,7 @@ if __name__ == '__main__':
                 })
                 sector_counts[sector] = sector_counts.get(sector, 0) + 1
         except Exception as e:
-            print(f"⚠️ {ticker} A++ 분석 중 오류: {e}")
+            print(f"⚠️ {ticker} 분석 중 오류: {e}")
             continue
 
     a_plus_plus_list = sorted(a_plus_plus_list, key=lambda x: x['atr_ratio'])
@@ -459,7 +458,7 @@ if __name__ == '__main__':
     backtest_results = {}
     for ticker_data in a_plus_plus_list:
         ticker = ticker_data['ticker']
-        result, mdd = backtest_strategy(data[ticker], dynamic_adx_threshold)
+        result, mdd = backtest_strategy(data[ticker], ADX_THRESHOLD)
         if result is not None:
             backtest_results[ticker] = {'return': result, 'mdd': mdd}
 
@@ -638,7 +637,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
             for s in pyramid_signals:
                 report_body += f"""
                 <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 추가 매수 조건 충족
-                (현재가 ${s['close']:.2f}, 추가 매수 가격 ${s['pyramid_price_usd']:.2f})</li>
+                (현재가 {s['close']:.2f}, 추가 매수 가격 ${s['pyramid_price_usd']:.2f})</li>
                 """
             report_body += "</ul>"
         if sell_signals:
