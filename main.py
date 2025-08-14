@@ -13,10 +13,11 @@ import io
 # ----------------- 설정값 -----------------
 TOTAL_SEED_KRW = 100000000  # 총 자금 1억 원
 MAX_LOSS_RATE = 0.01        # 최대 손실 비율 1%
-VOLUME_THRESHOLD = 1.5      # 거래량 비율 기준
+VOLUME_THRESHOLD = 1.5      # 거래량 비율 기준 (수정: 기준 강화)
 ADX_THRESHOLD = 19          # ADX > 19면 추세 강함 (동적 조절 기본값)
 ATR_UPPER_LIMIT = 3.5       # ATR 비율 상한선 (동적 조절 기본값)
 SECTOR_LIMIT = 3            # 섹터별 최대 종목 수
+MAX_UNITS = 4               # 피라미딩을 위한 최대 단위 수
 # ------------------------------------------
 
 def get_index_tickers(index_name):
@@ -48,7 +49,7 @@ def get_index_tickers(index_name):
         print(f"❌ {index_name} 티커 추출 실패: {e}")
         return []
 
-def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit):
+def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
     """단일 종목에 대한 터틀 트레이딩 신호를 계산합니다."""
     try:
         if not isinstance(ticker_data, pd.DataFrame) or ticker_data.empty:
@@ -63,7 +64,7 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx
         if adx_series is not None and not adx_series.empty:
             ticker_data['ADX'] = adx_series['ADX_14']
             ticker_data['+DI'] = adx_series['DMP_14']
-            ticker_data['-DI'] = adx_series['DMN_14']
+            ticker_data['DMN_14'] = adx_series['DMN_14']
         ticker_data['MA200'] = ta.sma(ticker_data['Close'], length=200)
         ticker_data['RSI'] = ta.rsi(ticker_data['Close'], length=14)
         ticker_data['VMA20'] = ta.sma(ticker_data['Volume'], length=20)
@@ -77,7 +78,7 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx
         last_atr = last_row['ATR']
         last_adx = last_row['ADX'] if pd.notna(last_row['ADX']) else 0
         last_plus_di = last_row['+DI'] if pd.notna(last_row['+DI']) else 0
-        last_minus_di = last_row['-DI'] if pd.notna(last_row['-DI']) else 0
+        last_minus_di = last_row['DMN_14'] if pd.notna(last_row['DMN_14']) else 0
         last_ma200 = last_row['MA200'] if pd.notna(last_row['MA200']) else 0
         last_rsi = last_row['RSI'] if pd.notna(last_row['RSI']) else 0
 
@@ -103,16 +104,33 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx
         stop_price = last_close - (2 * last_atr)
         target_price = last_close + (2 * last_atr)
 
-        indicators = {
-            "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "거래량_krw_billion": (last_volume * last_close * exchange_rate) / 1e8,
-            "ATR": last_atr, "ATR비율": atr_ratio, "MA200": last_ma200, "괴리율": disparity_rate,
-            "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di, "거래량비율": volume_ratio,
-            "손절가": round(stop_price * exchange_rate, 0), "목표가": round(target_price * exchange_rate, 0), "매수가능수량": buy_quantity, "RSI": last_rsi
-        }
+        if units > 0 and last_buy_price is not None:
+            # 포트폴리오 보유 종목의 손절/피라미딩 신호 계산
+            stop_price_portfolio = last_buy_price - (2 * last_atr)
+            pyramid_price = last_buy_price + (0.5 * last_atr)
+            
+            if last_close < stop_price_portfolio or last_close < last_10_low:
+                return "SELL", {
+                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
+                    "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
+                    "매수포함": True
+                }
+            elif last_close > pyramid_price and units < MAX_UNITS:
+                return "PYRAMID_BUY", {
+                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
+                    "추가매수가": round(pyramid_price * exchange_rate, 0), "추가매수가_usd": pyramid_price,
+                    "매수포함": True
+                }
+            else:
+                return "보유", {
+                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
+                    "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
+                    "매수포함": True
+                }
 
+        # 신규 매수 신호 계산
         is_above_ma200 = last_close > last_ma200
-        
-        buy_condition = (
+        initial_buy_condition = (
             last_close > last_20_high_prev and
             is_above_ma200 and
             vix_value < 30 and
@@ -124,12 +142,20 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx
             atr_ratio <= dynamic_atr_upper_limit
         )
 
-        if buy_condition:
+        if initial_buy_condition and units == 0:
             signal = "BUY"
         elif not is_above_ma200 or last_adx < dynamic_adx_threshold or last_close < last_10_low:
             signal = "SELL"
         else:
             signal = "보유"
+
+        indicators = {
+            "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "거래량_krw_billion": (last_volume * last_close * exchange_rate) / 1e8,
+            "ATR": last_atr, "ATR비율": atr_ratio, "MA200": last_ma200, "괴리율": disparity_rate,
+            "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di, "거래량비율": volume_ratio,
+            "손절가": round(stop_price * exchange_rate, 0), "목표가": round(target_price * exchange_rate, 0), "매수가능수량": buy_quantity, "RSI": last_rsi,
+            "손절가_usd": stop_price, "목표가_usd": target_price, "매수포함": False
+        }
 
         return signal, indicators
 
@@ -176,6 +202,13 @@ def get_ticker_sector(ticker):
     except:
         return 'Unknown'
 
+def read_positions_file(file_path='positions.csv'):
+    """포지션 파일을 읽어와서 DataFrame으로 반환합니다."""
+    if not os.path.exists(file_path):
+        print(f"⚠️ {file_path} 파일이 없습니다. 빈 포지션으로 시작합니다.")
+        return pd.DataFrame(columns=['ticker', 'buy_date', 'buy_price', 'units'])
+    return pd.read_csv(file_path)
+
 def backtest_strategy(ticker_data, dynamic_adx_threshold):
     """단순 백테스팅을 통해 전략의 수익률을 계산합니다."""
     if ticker_data.empty or len(ticker_data) < 250:
@@ -193,23 +226,21 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
         signals['ADX'] = adx_series['ADX_14']
     signals['20D_High'] = ticker_data['High'].rolling(20).max()
     signals['10D_Low'] = ticker_data['Low'].rolling(10).min()
-    signals['ATR'] = ta.atr(ticker_data['High'], ticker_data['Low'], ticker_data['Close'], length=20)
-
 
     for i in range(200, len(signals)):
-        prev_close = signals['Close'].iloc[i-1]
-        current_close = signals['Close'].iloc[i]
-
+        prev_close = signals.loc[signals.index[i-1], 'Close']
+        current_close = signals.loc[signals.index[i], 'Close']
+        
         buy_condition = (
-            current_close > signals['20D_High'].iloc[i-1] and
-            current_close > signals['MA200'].iloc[i] and
-            signals['ADX'].iloc[i] > dynamic_adx_threshold and
-            signals['RSI'].iloc[i] < 70
+            current_close > signals.loc[signals.index[i-1], '20D_High'] and
+            current_close > signals.loc[signals.index[i], 'MA200'] and
+            signals.loc[signals.index[i], 'ADX'] > dynamic_adx_threshold and
+            signals.loc[signals.index[i], 'RSI'] < 70
         )
         sell_condition = (
-            current_close < signals['MA200'].iloc[i] or
-            signals['ADX'].iloc[i] < dynamic_adx_threshold or
-            current_close < signals['10D_Low'].iloc[i]
+            current_close < signals.loc[signals.index[i], 'MA200'] or
+            signals.loc[signals.index[i], 'ADX'] < dynamic_adx_threshold or
+            current_close < signals.loc[signals.index[i], '10D_Low']
         )
 
         if buy_condition and signals.loc[signals.index[i-1], 'Position'] == 0:
@@ -234,9 +265,6 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
 if __name__ == '__main__':
     print("🚀 터틀 트레이딩 리포트 시작...")
     REPORT_TYPE = os.getenv("REPORT_TYPE", "morning_plan")
-    
-    # 📌 시드 금액 설정 (사용자의 실제 시드로 변경)
-    # TOTAL_SEED_KRW = 20000000 
     
     session = curl_requests.Session()
     session.headers.update({
@@ -272,7 +300,8 @@ if __name__ == '__main__':
     elif vix_value >= 30:
         dynamic_atr_upper_limit = 4.0
 
-    forward_pe = 22.4
+    # PER 데이터 가져오기 시도
+    forward_pe = 22.4 
     try:
         sp500_info = yf.Ticker('^GSPC').info
         if 'forwardPE' in sp500_info and sp500_info['forwardPE'] is not None:
@@ -282,7 +311,7 @@ if __name__ == '__main__':
             print("⚠️ S&P 500 전망 PER 데이터 없음. 기본값 사용")
     except Exception as e:
         print(f"⚠️ S&P 500 전망 PER 가져오기 실패: {e}, 기본값 사용")
-
+        
     sp500_tickers = get_index_tickers('sp500')
     nasdaq100_tickers = get_index_tickers('nasdaq100')
     all_tickers = list(set(sp500_tickers + nasdaq100_tickers))
@@ -291,12 +320,18 @@ if __name__ == '__main__':
         print("❌ 티커 목록이 비어 있습니다. 프로그램을 종료합니다.")
         sys.exit(1)
 
+    # 포트폴리오 파일에서 보유 종목 정보 불러오기
+    positions_df = read_positions_file()
+    positions_dict = {row['ticker']: row for _, row in positions_df.iterrows()}
+
     data = {}
     failed_tickers = []
     print(f"📊 총 {len(all_tickers)}개 종목 데이터 다운로드 중...")
     
-    for i, ticker in enumerate(all_tickers):
-        print(f"({i+1}/{len(all_tickers)}) 다운로드 중: {ticker}")
+    all_target_tickers = list(set(all_tickers + list(positions_dict.keys())))
+
+    for i, ticker in enumerate(all_target_tickers):
+        print(f"({i+1}/{len(all_target_tickers)}) 다운로드 중: {ticker}")
         try:
             ticker_data = yf.download(ticker, period="1y", auto_adjust=True, session=session, progress=False)
             if ticker_data is not None and not ticker_data.empty and len(ticker_data) >= 200:
@@ -312,6 +347,8 @@ if __name__ == '__main__':
     print(f"✅ 성공: {len(data)}개, ❌ 실패: {len(failed_tickers)}개")
 
     a_plus_plus_list = []
+    pyramid_signals = []
+    sell_signals = []
     sector_counts = {}
     
     def is_a_plus_plus(ind, price_data, sector_name):
@@ -338,9 +375,27 @@ if __name__ == '__main__':
         try:
             price_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
             sector = get_ticker_sector(ticker)
-            signal, ind = get_turtle_signal(ticker, price_data, vix_value, EXCHANGE_RATE_KRW_USD, dynamic_adx_threshold, dynamic_atr_upper_limit)
             
-            if signal == "BUY" and is_a_plus_plus(ind, price_data, sector):
+            # 보유 종목인지 확인
+            is_holding = ticker in positions_dict
+            last_buy_price = positions_dict[ticker]['buy_price'] if is_holding else None
+            units = positions_dict[ticker]['units'] if is_holding else 0
+
+            signal, ind = get_turtle_signal(ticker, price_data, vix_value, EXCHANGE_RATE_KRW_USD, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=last_buy_price, units=units)
+
+            if is_holding:
+                if signal == "PYRAMID_BUY":
+                    pyramid_signals.append({
+                        'ticker': ticker, 'close_krw': ind['종가_krw'], 'pyramid_price_krw': ind['추가매수가'],
+                        'units': units, 'sector': sector
+                    })
+                elif signal == "SELL":
+                    sell_signals.append({
+                        'ticker': ticker, 'close_krw': ind['종가_krw'], 'stop_price_krw': ind['손절가'],
+                        'units': units, 'sector': sector
+                    })
+            
+            if signal == "BUY" and is_a_plus_plus(ind, price_data, sector) and not is_holding:
                 a_plus_plus_list.append({
                     'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'],
                     'volume_krw': ind['거래량_krw_billion'], 'atr_ratio': ind['ATR비율'],
@@ -355,6 +410,17 @@ if __name__ == '__main__':
             continue
 
     a_plus_plus_list = sorted(a_plus_plus_list, key=lambda x: x['atr_ratio'])
+    
+    # A++ 종목에 대해서만 백테스팅 실행
+    a_plus_plus_tickers = [item['ticker'] for item in a_plus_plus_list]
+    backtest_results = {}
+    for ticker in a_plus_plus_tickers:
+        try:
+            result = backtest_strategy(data[ticker], dynamic_adx_threshold)
+            if result is not None:
+                backtest_results[ticker] = result
+        except Exception as e:
+            print(f"⚠️ {ticker} 백테스팅 오류: {e}")
 
     if REPORT_TYPE == "morning_plan":
         title = "🌅 [계획용] 오전 7시 터틀 트레이딩 리포트"
@@ -365,7 +431,6 @@ if __name__ == '__main__':
         subtitle = "장 시작 직전, <b>프리마켓 실시간 데이터</b>를 반영한 <b>최종 결정용 리포트</b>입니다."
         timing_note = "📌 이 리포트는 프리마켓 가격을 반영했습니다. 매수 주문을 위한 최종 확인이 필요합니다."
     
-    # subject 변수가 항상 정의되도록 수정
     subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {forward_pe:.1f})"
 
     report_body = f"""
@@ -382,11 +447,6 @@ if __name__ == '__main__':
         <li><b>괴리율:</b> 현재가가 MA200에서 얼마나 떨어져 있는지 보여주는 지표입니다.</li>
         <li><b>ADX:</b> 추세의 강도를 나타냅니다. 20 이상이면 추세가 강하다고 판단합니다.</li>
         <li><b>매수 가능 수량:</b> '시드 1억, 1% 손실 허용' 규칙에 따라 계산된 수량입니다.</li>
-        <li><b>매도 신호:</b><br/>
-            1. <b>추세 약화:</b> ADX 지표가 20 이하로 떨어짐<br/>
-            2. <b>장기 추세 이탈:</b> 주가가 200일 이동평균선 아래로 떨어짐<br/>
-            3. <b>손절가:</b> 주가가 10일 최저가를 하회할 때
-        </li>
     </ul>
 
     <h2>=== 환율 & ATR 가이드 ===</h2>
@@ -529,7 +589,28 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     </div>
     """
     report_body += market_condition_html
-    
+
+    # 보유 종목에 대한 신호
+    if pyramid_signals or sell_signals:
+        report_body += "<h2>🚀 현재 포트폴리오 신호</h2>"
+        if pyramid_signals:
+            report_body += "<h3>🟢 Pyramiding (추가 매수) 신호</h3><ul>"
+            for s in pyramid_signals:
+                report_body += f"""
+                <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 추가 매수 조건 충족
+                (현재가 {format_krw(s['close_krw'])}, 추가 매수 가격 {format_krw(s['pyramid_price_krw'])})</li>
+                """
+            report_body += "</ul>"
+        if sell_signals:
+            report_body += "<h3>🔴 SELL (청산) 신호</h3><ul>"
+            for s in sell_signals:
+                report_body += f"""
+                <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 손절/익절 조건 충족
+                (현재가 {format_krw(s['close_krw'])}, 손절가 {format_krw(s['stop_price_krw'])})</li>
+                """
+            report_body += "</ul>"
+        report_body += "<hr><br/>"
+        
     if a_plus_plus_list:
         report_body += "<h2>🌟 나만의 A++ 추천 종목 (고성과 + 안정성)</h2><ul>"
         for s in a_plus_plus_list:
@@ -544,94 +625,24 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     else:
         report_body += "<h2>🌟 나만의 A++ 추천 종목</h2><p>현재 기준에 맞는 A++ 종목이 없습니다.</p><hr><br/>"
         
-    def generate_section(ticker_list, name):
-        buy_signals = []
-        sell_signals = []
+    # 백테스팅 결과 추가 (A++ 종목만)
+    if backtest_results:
+        report_body += "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2>"
+        report_body += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; font-size: 14px;'><tr><th>종목</th><th>수익률</th><th>의미</th></tr>"
         
-        for ticker in ticker_list:
-            if ticker not in data:
-                continue
+        for ticker, result in backtest_results.items():
+            if result > 0:
+                meaning = "긍정적 성과 (지난 1년간 이 전략 적용 시 수익)"
+            elif result < 0:
+                meaning = "부정적 성과 (지난 1년간 이 전략 적용 시 손실)"
+            else:
+                meaning = "중립적 성과 (진입 조건 불부합 또는 데이터 부족)"
             
-            try:
-                price_data = data[ticker].copy()
-                if len(price_data) < 200:
-                    continue
-                
-                price_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-                sector = get_ticker_sector(ticker)
-                signal, ind = get_turtle_signal(ticker, price_data, vix_value, EXCHANGE_RATE_KRW_USD, dynamic_adx_threshold, dynamic_atr_upper_limit)
-                
-                if signal == "BUY":
-                    buy_signals.append({
-                        'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'],
-                        'volume_krw': ind['거래량_krw_billion'], 'atr_ratio': ind['ATR비율'],
-                        'target': (ind['종가'] + 2 * ind['ATR']), 'stop': (ind['종가'] - 2 * ind['ATR']),
-                        'target_krw': ind['목표가'], 'stop_krw': ind['손절가'],
-                        'volume_ratio': ind['거래량비율'], 'RSI': ind['RSI'], 'sector': sector
-                    })
-                elif signal == "SELL":
-                    sell_signals.append({
-                        'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'],
-                        'volume_krw': ind['거래량_krw_billion'], 'atr_ratio': ind['ATR비율'],
-                        'volume_ratio': ind['거래량비율'], 'RSI': ind['RSI'], 'sector': sector
-                    })
-            except Exception as e:
-                print(f"⚠️ {ticker} 신호 분석 중 오류: {e}")
-                continue
-
-        buy_signals = sorted(buy_signals, key=lambda x: x['atr_ratio'])
-        sell_signals = sorted(sell_signals, key=lambda x: x['atr_ratio'])
-
-        section = f"<h2>[{name}: 티커 {len(ticker_list)}개, 매수 {len(buy_signals)}개, 매도 {len(sell_signals)}개]</h2>"
+            report_body += f"<tr><td><b>{ticker}</b></td><td>{result:.2f}%</td><td>{meaning}</td></tr>"
         
-        buy_html = ""
-        for s in buy_signals:
-            buy_html += f"""
-            <li><b>{s['ticker']}</b> ({s['sector']}): 매수
-                (종가 ${s['close']:.2f} ({format_krw(s['close_krw'])}), 거래량 {format_krw(s['volume_krw'])}, 거래량비율 {s['volume_ratio']:.1f}x,
-                ATR비율 {s['atr_ratio']:.2f}%, RSI {s['RSI']:.2f}, 목표가 ${s['target']:.2f} ({format_krw(s['target_krw'])}), 손절가 ${s['stop']:.2f} ({format_krw(s['stop_krw'])}))
-            </li>
-            """
-
-        sell_html = ""
-        for s in sell_signals:
-            sell_html += f"""
-            <li><b>{s['ticker']}</b> ({s['sector']}): 매도
-                (종가 ${s['close']:.2f} ({format_krw(s['close_krw'])}), 거래량 {format_krw(s['volume_krw'])}, 거래량비율 {s['volume_ratio']:.1f}x,
-                ATR비율 {s['atr_ratio']:.2f}%, RSI {s['RSI']:.2f})
-            </li>
-            """
-
-        return section + \
-                "<h3>🟢 BUY 신호</h3><ul>" + (buy_html if buy_html else "<li>없음</li>") + "</ul>" + \
-                "<h3>🔴 SELL 신호</h3><ul>" + (sell_html if sell_html else "<li>없음</li>") + "</ul>"
-
-    report_body += generate_section(sp500_tickers, "S&P500")
-    report_body += generate_section(nasdaq100_tickers, "NASDAQ100")
-
-    
-    # 백테스팅 결과 추가
-    if data:
-        backtest_results_html = "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2>"
-        tickers_to_backtest = list(data.keys())[:10]
-        for ticker in tickers_to_backtest:
-            try:
-                result = backtest_strategy(data[ticker], dynamic_adx_threshold)
-                if result is not None:
-                    backtest_results_html += f"<p><b>{ticker}</b>: {result:.2f}%</p>"
-                else:
-                    backtest_results_html += f"<p><b>{ticker}</b>: 백테스팅 데이터 부족</p>"
-            except Exception as e:
-                backtest_results_html += f"<p><b>{ticker}</b>: 백테스팅 오류 - {e}</p>"
-        
-        report_body += backtest_results_html
-    
-    # subject 변수 정의
-    if REPORT_TYPE == "morning_plan":
-        title = "🌅 [계획용] 오전 7시 터틀 트레이딩 리포트"
+        report_body += "</table>"
     else:
-        title = "🌃 [실시간] 오후 10시 터틀 트레이딩 리포트"
-    subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {forward_pe:.1f})"
+        report_body += "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2><p>A++ 종목이 없어 백테스팅을 실행할 수 없습니다.</p>"
 
     send_email(subject, report_body)
     print("✅ 리포트 생성 및 전송 완료!")
