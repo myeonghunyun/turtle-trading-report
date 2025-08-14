@@ -13,7 +13,7 @@ import io
 # ----------------- 설정값 -----------------
 TOTAL_SEED_KRW = 100000000  # 총 자금 1억 원
 MAX_LOSS_RATE = 0.01        # 최대 손실 비율 1%
-VOLUME_THRESHOLD = 1.2      # 거래량 비율 기준
+VOLUME_THRESHOLD = 1.5      # 거래량 비율 기준 (수정: 기준 강화)
 ADX_THRESHOLD = 19          # ADX > 19면 추세 강함
 # ------------------------------------------
 
@@ -64,7 +64,8 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate):
             ticker_data['+DI'] = adx_series['DMP_14']
             ticker_data['-DI'] = adx_series['DMN_14']
         ticker_data['MA200'] = ta.sma(ticker_data['Close'], length=200)
-        ticker_data['RSI'] = ta.rsi(ticker_data['Close'], length=14) # RSI 추가
+        ticker_data['RSI'] = ta.rsi(ticker_data['Close'], length=14)
+        ticker_data['VMA20'] = ta.sma(ticker_data['Volume'], length=20) # 20일 거래량 이동평균 추가
 
         if ticker_data.iloc[-1].isnull().any():
             return "분석 오류", {}
@@ -84,6 +85,12 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate):
 
         avg_volume_20d = ticker_data['Volume'].rolling(window=20).mean().iloc[-1]
         volume_ratio = last_volume / avg_volume_20d if avg_volume_20d > 0 else 0
+        
+        last_vma20 = last_row['VMA20']
+        volume_above_vma = last_volume > last_vma20 if last_vma20 > 0 else False
+
+        avg_atr_20d = ticker_data['ATR'].rolling(window=20).mean().iloc[-1]
+        atr_above_avg = last_atr > avg_atr_20d
 
         disparity_rate = (last_close - last_ma200) / last_ma200 * 100 if last_ma200 > 0 else 0
         atr_ratio = (last_atr / last_close) * 100 if last_close > 0 else 0
@@ -106,14 +113,16 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate):
 
         is_above_ma200 = last_close > last_ma200
 
-        # 매수 조건 (RSI 과매수 제외 조건 추가)
+        # 매수 조건 (강화된 거래량 및 변동성 필터 적용)
         buy_condition = (
             last_close > last_20_high_prev and
             is_above_ma200 and
             vix_value < 30 and
             last_adx > ADX_THRESHOLD and
             volume_ratio > VOLUME_THRESHOLD and
-            last_rsi < 70 # RSI가 과매수 상태가 아닐 때만 매수
+            volume_above_vma and # VMA 필터 추가
+            atr_above_avg and   # ATR 변동성 필터 추가
+            last_rsi < 70
         )
 
         if buy_condition:
@@ -169,9 +178,8 @@ def backtest_strategy(ticker_data):
     signals = pd.DataFrame(index=ticker_data.index)
     signals['Close'] = ticker_data['Close']
     signals['Position'] = 0
-    signals['Strategy'] = 1.0  # 초기 자산 1.0
+    signals['Strategy'] = 1.0
 
-    # 지표 계산
     signals['MA200'] = ta.sma(signals['Close'], length=200)
     signals['RSI'] = ta.rsi(signals['Close'], length=14)
     adx_series = ta.adx(ticker_data['High'], ticker_data['Low'], ticker_data['Close'], length=14)
@@ -180,7 +188,6 @@ def backtest_strategy(ticker_data):
     signals['20D_High'] = ticker_data['High'].rolling(20).max()
     signals['10D_Low'] = ticker_data['Low'].rolling(10).min()
 
-    # 백테스팅 루프
     for i in range(200, len(signals)):
         prev_close = signals['Close'].iloc[i-1]
         current_close = signals['Close'].iloc[i]
@@ -204,14 +211,12 @@ def backtest_strategy(ticker_data):
         else:
             signals['Position'].iloc[i] = signals['Position'].iloc[i-1]
 
-        # 수익률 계산
         if signals['Position'].iloc[i-1] == 1:
             return_rate = (current_close / prev_close) - 1
             signals['Strategy'].iloc[i] = signals['Strategy'].iloc[i-1] * (1 + return_rate)
         else:
             signals['Strategy'].iloc[i] = signals['Strategy'].iloc[i-1]
 
-    # 최종 수익률
     if not signals['Strategy'].empty:
         total_return = (signals['Strategy'].iloc[-1] - 1) * 100
         return total_return
@@ -249,8 +254,7 @@ if __name__ == '__main__':
         print(f"⚠️ VIX 가져오기 실패: {e}, 기본값 사용")
     print(f"📈 VIX 값: {vix_value:.2f}")
 
-    # ✅ S&P 500 전망 PER 동적으로 가져오기
-    forward_pe = 22.4 # 기본값
+    forward_pe = 22.4
     try:
         sp500_info = yf.Ticker('^GSPC').info
         if 'forwardPE' in sp500_info and sp500_info['forwardPE'] is not None:
@@ -290,22 +294,28 @@ if __name__ == '__main__':
     print(f"✅ 성공: {len(data)}개, ❌ 실패: {len(failed_tickers)}개")
 
     a_plus_plus_list = []
-    def is_a_plus_plus(ind):
+    def is_a_plus_plus(ind, price_data):
+        last_atr = price_data['ATR'].iloc[-1]
+        avg_atr_20d = price_data['ATR'].rolling(window=20).mean().iloc[-1] if len(price_data) >= 20 else last_atr
+        
         return (
             ind['ADX'] > 25 and
             ind['+DI'] > ind['-DI'] and
             ind['종가'] > ind['MA200'] and
             1.5 <= ind['ATR비율'] <= 3.5 and
-            ind['거래량비율'] > 1.5 and
+            ind['거래량비율'] > VOLUME_THRESHOLD and
             ind['매수가능수량'] > 0 and
-            ind['RSI'] < 70
+            ind['RSI'] < 70 and
+            ind['거래량비율'] > 1 and # 거래량이 평균 이상이고
+            ind['거래량'] > price_data['VMA20'].iloc[-1] and # 20일 거래량 이평선도 상회
+            last_atr > avg_atr_20d # ATR도 평균보다 높음 (노이즈 필터)
         )
     
     for ticker, price_data in data.items():
         try:
             price_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
             signal, ind = get_turtle_signal(ticker, price_data, vix_value, EXCHANGE_RATE_KRW_USD)
-            if signal == "BUY" and is_a_plus_plus(ind):
+            if signal == "BUY" and is_a_plus_plus(ind, price_data):
                 a_plus_plus_list.append({
                     'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'],
                     'volume_krw': ind['거래량_krw_billion'], 'atr_ratio': ind['ATR비율'],
@@ -398,7 +408,6 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     <p><b>💡 팁:</b> A++ 종목은 <b>거래량비율 > 1.5x</b>를 충족해야 합니다.</p>
     """
 
-    # ✅ 시장 과열도 진단 섹션을 A++ 종목 섹션 앞으로 이동
     disparity_sp500 = 0
     try:
         sp500_data = yf.download('^GSPC', period="250d", auto_adjust=True, session=session, progress=False)
@@ -573,7 +582,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     # 백테스팅 결과 추가
     if data:
         backtest_results_html = "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2>"
-        tickers_to_backtest = list(data.keys())[:10]  # 상위 10개 종목만 테스트
+        tickers_to_backtest = list(data.keys())[:10]
         for ticker in tickers_to_backtest:
             try:
                 result = backtest_strategy(data[ticker])
