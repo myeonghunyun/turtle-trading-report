@@ -179,7 +179,7 @@ if __name__ == '__main__':
     # ✅ 실시간 환율 가져오기
     EXCHANGE_RATE_KRW_USD = 1372.88
     try:
-        forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False, show_errors=False)
+        forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if forex_data is not None and not forex_data.empty:
             EXCHANGE_RATE_KRW_USD = float(forex_data['Close'].iloc[-1])
         else:
@@ -191,7 +191,7 @@ if __name__ == '__main__':
     # VIX 가져오기
     vix_value = 30.0
     try:
-        vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False, show_errors=False)
+        vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if vix_data is not None and not vix_data.empty and not vix_data['Close'].dropna().empty:
             vix_value = float(vix_data['Close'].dropna().iloc[-1])
         else:
@@ -217,7 +217,7 @@ if __name__ == '__main__':
     for i, ticker in enumerate(all_tickers):
         print(f"({i+1}/{len(all_tickers)}) 다운로드 중: {ticker}")
         try:
-            ticker_data = yf.download(ticker, period="1y", auto_adjust=True, session=session, progress=False, show_errors=False)
+            ticker_data = yf.download(ticker, period="1y", auto_adjust=True, session=session, progress=False)
             if ticker_data is not None and not ticker_data.empty and len(ticker_data) >= 200:
                 data[ticker] = ticker_data
             else:
@@ -419,7 +419,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     # ====== 시장 과열도 진단 섹션 추가 ======
     disparity_sp500 = 0
     try:
-        sp500_data = yf.download('^GSPC', period="250d", auto_adjust=True, session=session, progress=False, show_errors=False)
+        sp500_data = yf.download('^GSPC', period="250d", auto_adjust=True, session=session, progress=False)
         if not sp500_data.empty and len(sp500_data) >= 200:
             sp500_close = sp500_data['Close'].iloc[-1]
             sp500_ma200 = sp500_data['Close'].rolling(200).mean().iloc[-1]
