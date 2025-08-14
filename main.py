@@ -11,15 +11,50 @@ import sys
 import io
 import numpy as np
 
-# ----------------- 설정값 -----------------
-TOTAL_SEED_USD = 72831  # 총 자금 약 1억 원을 달러로 환산 (약 1373원/달러 기준)
-MAX_LOSS_RATE = 0.01        # 최대 손실 비율 1%
-VOLUME_THRESHOLD = 1.5      # 거래량 비율 기준 (수정: 기준 강화)
-ADX_THRESHOLD = 19          # ADX > 19면 추세 강함 (동적 조절 기본값)
-ATR_UPPER_LIMIT = 3.5       # ATR 비율 상한선 (동적 조절 기본값)
-SECTOR_LIMIT = 3            # 섹터별 최대 종목 수
-MAX_UNITS = 4               # 피라미딩을 위한 최대 단위 수
-# ------------------------------------------
+# ----------------- 설정값을 외부 파일에서 불러오기 -----------------
+def read_settings(file_path='settings.txt'):
+    settings = {}
+    if not os.path.exists(file_path):
+        print(f"❌ 설정 파일 '{file_path}'이 없습니다. 프로그램을 종료합니다.")
+        sys.exit(1)
+        
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            key, value = line.split('=')
+            settings[key.strip()] = value.strip()
+            
+    # 값의 자료형을 변환하여 반환
+    try:
+        return {
+            'TOTAL_SEED_KRW': int(settings['TOTAL_SEED_KRW']),
+            'MAX_LOSS_RATE': float(settings['MAX_LOSS_RATE']),
+            'VOLUME_THRESHOLD': float(settings['VOLUME_THRESHOLD']),
+            'ADX_THRESHOLD': int(settings['ADX_THRESHOLD']),
+            'ATR_UPPER_LIMIT': float(settings['ATR_UPPER_LIMIT']),
+            'SECTOR_LIMIT': int(settings['SECTOR_LIMIT']),
+            'FORWARD_PER': float(settings['FORWARD_PER'])
+        }
+    except KeyError as e:
+        print(f"❌ 설정 파일에 필수 항목 '{e}'이(가) 누락되었습니다.")
+        sys.exit(1)
+    except ValueError as e:
+        print(f"❌ 설정 파일의 값 형식이 올바르지 않습니다: {e}")
+        sys.exit(1)
+
+# ----------------- 설정값을 전역 변수로 설정 -----------------
+SETTINGS = read_settings()
+TOTAL_SEED_KRW = SETTINGS['TOTAL_SEED_KRW']
+MAX_LOSS_RATE = SETTINGS['MAX_LOSS_RATE']
+VOLUME_THRESHOLD = SETTINGS['VOLUME_THRESHOLD']
+ADX_THRESHOLD = SETTINGS['ADX_THRESHOLD']
+ATR_UPPER_LIMIT = SETTINGS['ATR_UPPER_LIMIT']
+SECTOR_LIMIT = SETTINGS['SECTOR_LIMIT']
+FORWARD_PER = SETTINGS['FORWARD_PER']
+
+MAX_UNITS = 4
 
 def get_index_tickers(index_name):
     """Wikipedia에서 S&P 500 또는 Nasdaq-100 티커 목록을 가져옵니다."""
@@ -50,7 +85,7 @@ def get_index_tickers(index_name):
         print(f"❌ {index_name} 티커 추출 실패: {e}")
         return []
 
-def get_turtle_signal(ticker, ticker_data, vix_value, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
+def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
     """단일 종목에 대한 터틀 트레이딩 신호를 계산합니다."""
     try:
         if not isinstance(ticker_data, pd.DataFrame) or ticker_data.empty:
@@ -98,7 +133,7 @@ def get_turtle_signal(ticker, ticker_data, vix_value, dynamic_adx_threshold, dyn
         disparity_rate = (last_close - last_ma200) / last_ma200 * 100 if last_ma200 > 0 else 0
         atr_ratio = (last_atr / last_close) * 100 if last_close > 0 else 0
 
-        max_loss_usd = TOTAL_SEED_USD * MAX_LOSS_RATE
+        max_loss_usd = (TOTAL_SEED_KRW * MAX_LOSS_RATE) / exchange_rate
         loss_per_share = last_atr * 2
         buy_quantity = int(max_loss_usd / loss_per_share) if loss_per_share > 0 else 0
         
@@ -111,20 +146,20 @@ def get_turtle_signal(ticker, ticker_data, vix_value, dynamic_adx_threshold, dyn
             
             if last_close < stop_price_portfolio or last_close < last_10_low:
                 return "SELL", {
-                    "종가": last_close, "ATR": last_atr,
-                    "손절가": stop_price_portfolio,
+                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
+                    "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
                     "매수포함": True
                 }
             elif last_close > pyramid_price and units < MAX_UNITS:
                 return "PYRAMID_BUY", {
-                    "종가": last_close, "ATR": last_atr,
-                    "추가매수가": pyramid_price,
+                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
+                    "추가매수가": round(pyramid_price * exchange_rate, 0), "추가매수가_usd": pyramid_price,
                     "매수포함": True
                 }
             else:
                 return "보유", {
-                    "종가": last_close, "ATR": last_atr,
-                    "손절가": stop_price_portfolio,
+                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
+                    "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
                     "매수포함": True
                 }
 
@@ -149,11 +184,11 @@ def get_turtle_signal(ticker, ticker_data, vix_value, dynamic_adx_threshold, dyn
             signal = "보유"
 
         indicators = {
-            "종가": last_close, "거래량": last_volume, "거래량_bil": (last_volume * last_close) / 1e9,
+            "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "거래량_krw_billion": (last_volume * last_close * exchange_rate) / 1e8,
             "ATR": last_atr, "ATR비율": atr_ratio, "MA200": last_ma200, "괴리율": disparity_rate,
             "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di, "거래량비율": volume_ratio,
-            "손절가": stop_price, "목표가": target_price, "매수가능수량": buy_quantity, "RSI": last_rsi,
-            "매수포함": False
+            "손절가": round(stop_price * exchange_rate, 0), "목표가": round(target_price * exchange_rate, 0), "매수가능수량": buy_quantity, "RSI": last_rsi,
+            "손절가_usd": stop_price, "목표가_usd": target_price, "매수포함": False
         }
 
         return signal, indicators
@@ -161,6 +196,13 @@ def get_turtle_signal(ticker, ticker_data, vix_value, dynamic_adx_threshold, dyn
     except Exception as e:
         print(f"❌ {ticker} 분석 중 오류: {e}")
         return "오류", {}
+
+def format_krw(amount):
+    """금액을 '만원' 또는 '억원' 단위로 포맷팅합니다."""
+    if amount >= 100000000:
+        return f"{amount / 100000000:,.1f}억원"
+    else:
+        return f"{amount / 10000:,.0f}만원"
 
 def send_email(subject, body):
     """리포트를 이메일로 전송합니다."""
@@ -306,7 +348,7 @@ if __name__ == '__main__':
     elif vix_value >= 30:
         dynamic_atr_upper_limit = 4.0
 
-    forward_pe = 22.4
+    forward_pe = FORWARD_PER
     try:
         sp500_info = yf.Ticker('^GSPC').info
         if 'forwardPE' in sp500_info and sp500_info['forwardPE'] is not None:
@@ -626,13 +668,14 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     backtest_results = {}
     for ticker_data in a_plus_plus_list:
         ticker = ticker_data['ticker']
-        result, mdd = backtest_strategy(data[ticker], dynamic_adx_threshold)
+        result, mdd = backtest_strategy(data[ticker], ADX_THRESHOLD)
         if result is not None:
             backtest_results[ticker] = {'return': result, 'mdd': mdd}
 
     if backtest_results:
         report_body += "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2>"
-        report_body += "<p>※ 백테스팅 결과는 과거 성과이며, 미래 수익률을 보장하지 않습니다.</p>"
+        report_body += """<p>※ 백테스팅 결과는 과거 성과이며, 미래 수익률을 보장하지 않습니다.<br>
+            <b>최대 낙폭(MDD)</b>: 전략이 실행된 기간 동안 고점에서 저점까지의 최대 손실률입니다. 전략의 리스크를 파악하는 중요한 지표입니다.</p>"""
         report_body += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; font-size: 14px;'>"
         report_body += "<tr><th>종목</th><th>수익률</th><th>최대 낙폭(MDD)</th></tr>"
         
@@ -642,6 +685,6 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         report_body += "</table>"
     else:
         report_body += "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2><p>A++ 종목이 없어 백테스팅을 실행할 수 없습니다.</p>"
-
+    
     send_email(subject, report_body)
     print("✅ 리포트 생성 및 전송 완료!")
