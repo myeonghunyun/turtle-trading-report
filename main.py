@@ -14,7 +14,9 @@ import io
 TOTAL_SEED_KRW = 100000000  # 총 자금 1억 원
 MAX_LOSS_RATE = 0.01        # 최대 손실 비율 1%
 VOLUME_THRESHOLD = 1.5      # 거래량 비율 기준 (수정: 기준 강화)
-ADX_THRESHOLD = 19          # ADX > 19면 추세 강함
+ADX_THRESHOLD = 19          # ADX > 19면 추세 강함 (동적 조절 기본값)
+ATR_UPPER_LIMIT = 3.5       # ATR 비율 상한선 (동적 조절 기본값)
+SECTOR_LIMIT = 3            # 섹터별 최대 종목 수
 # ------------------------------------------
 
 def get_index_tickers(index_name):
@@ -46,7 +48,7 @@ def get_index_tickers(index_name):
         print(f"❌ {index_name} 티커 추출 실패: {e}")
         return []
 
-def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate):
+def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit):
     """단일 종목에 대한 터틀 트레이딩 신호를 계산합니다."""
     try:
         if not isinstance(ticker_data, pd.DataFrame) or ticker_data.empty:
@@ -65,7 +67,7 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate):
             ticker_data['-DI'] = adx_series['DMN_14']
         ticker_data['MA200'] = ta.sma(ticker_data['Close'], length=200)
         ticker_data['RSI'] = ta.rsi(ticker_data['Close'], length=14)
-        ticker_data['VMA20'] = ta.sma(ticker_data['Volume'], length=20) # 20일 거래량 이동평균 추가
+        ticker_data['VMA20'] = ta.sma(ticker_data['Volume'], length=20)
 
         if ticker_data.iloc[-1].isnull().any():
             return "분석 오류", {}
@@ -118,16 +120,17 @@ def get_turtle_signal(ticker, ticker_data, vix_value, exchange_rate):
             last_close > last_20_high_prev and
             is_above_ma200 and
             vix_value < 30 and
-            last_adx > ADX_THRESHOLD and
+            last_adx > dynamic_adx_threshold and
             volume_ratio > VOLUME_THRESHOLD and
-            volume_above_vma and # VMA 필터 추가
-            atr_above_avg and   # ATR 변동성 필터 추가
-            last_rsi < 70
+            volume_above_vma and
+            atr_above_avg and
+            last_rsi < 70 and
+            atr_ratio <= dynamic_atr_upper_limit
         )
 
         if buy_condition:
             signal = "BUY"
-        elif not is_above_ma200 or last_adx < ADX_THRESHOLD or last_close < last_10_low:
+        elif not is_above_ma200 or last_adx < dynamic_adx_threshold or last_close < last_10_low:
             signal = "SELL"
         else:
             signal = "보유"
@@ -169,8 +172,16 @@ def send_email(subject, body):
     except Exception as e:
         print(f"❌ 이메일 전송 실패: {e}")
 
+def get_ticker_sector(ticker):
+    """yfinance를 통해 티커의 섹터 정보를 가져옵니다."""
+    try:
+        info = yf.Ticker(ticker).info
+        return info.get('sector', 'Unknown')
+    except:
+        return 'Unknown'
+
 # ================ 백테스팅 함수 추가 ==================
-def backtest_strategy(ticker_data):
+def backtest_strategy(ticker_data, dynamic_adx_threshold):
     """단순 백테스팅을 통해 전략의 수익률을 계산합니다."""
     if ticker_data.empty or len(ticker_data) < 250:
         return None
@@ -195,12 +206,12 @@ def backtest_strategy(ticker_data):
         buy_condition = (
             current_close > signals['20D_High'].iloc[i-1] and
             current_close > signals['MA200'].iloc[i] and
-            signals['ADX'].iloc[i] > ADX_THRESHOLD and
+            signals['ADX'].iloc[i] > dynamic_adx_threshold and
             signals['RSI'].iloc[i] < 70
         )
         sell_condition = (
             current_close < signals['MA200'].iloc[i] or
-            signals['ADX'].iloc[i] < ADX_THRESHOLD or
+            signals['ADX'].iloc[i] < dynamic_adx_threshold or
             current_close < signals['10D_Low'].iloc[i]
         )
 
@@ -254,6 +265,14 @@ if __name__ == '__main__':
         print(f"⚠️ VIX 가져오기 실패: {e}, 기본값 사용")
     print(f"📈 VIX 값: {vix_value:.2f}")
 
+    # ✅ VIX에 따라 동적 임계값 설정
+    dynamic_adx_threshold = ADX_THRESHOLD
+    dynamic_atr_upper_limit = ATR_UPPER_LIMIT
+    if vix_value < 20:
+        dynamic_adx_threshold = 19
+    elif vix_value >= 30:
+        dynamic_atr_upper_limit = 4.0
+
     forward_pe = 22.4
     try:
         sp500_info = yf.Ticker('^GSPC').info
@@ -294,35 +313,43 @@ if __name__ == '__main__':
     print(f"✅ 성공: {len(data)}개, ❌ 실패: {len(failed_tickers)}개")
 
     a_plus_plus_list = []
-    def is_a_plus_plus(ind, price_data):
+    sector_counts = {}
+    def is_a_plus_plus(ind, price_data, sector_name):
         last_atr = price_data['ATR'].iloc[-1]
         avg_atr_20d = price_data['ATR'].rolling(window=20).mean().iloc[-1] if len(price_data) >= 20 else last_atr
         
+        # ✅ 섹터별 분산투자 조건 추가
+        if sector_counts.get(sector_name, 0) >= SECTOR_LIMIT:
+            return False
+            
         return (
-            ind['ADX'] > 25 and
+            ind['ADX'] > dynamic_adx_threshold and
             ind['+DI'] > ind['-DI'] and
             ind['종가'] > ind['MA200'] and
-            1.5 <= ind['ATR비율'] <= 3.5 and
+            1.5 <= ind['ATR비율'] <= dynamic_atr_upper_limit and
             ind['거래량비율'] > VOLUME_THRESHOLD and
             ind['매수가능수량'] > 0 and
             ind['RSI'] < 70 and
-            ind['거래량비율'] > 1 and # 거래량이 평균 이상이고
-            ind['거래량'] > price_data['VMA20'].iloc[-1] and # 20일 거래량 이평선도 상회
-            last_atr > avg_atr_20d # ATR도 평균보다 높음 (노이즈 필터)
+            ind['거래량비율'] > 1 and
+            ind['거래량'] > price_data['VMA20'].iloc[-1] and
+            last_atr > avg_atr_20d
         )
     
     for ticker, price_data in data.items():
         try:
             price_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-            signal, ind = get_turtle_signal(ticker, price_data, vix_value, EXCHANGE_RATE_KRW_USD)
-            if signal == "BUY" and is_a_plus_plus(ind, price_data):
+            sector = get_ticker_sector(ticker) # 섹터 정보 가져오기
+            signal, ind = get_turtle_signal(ticker, price_data, vix_value, EXCHANGE_RATE_KRW_USD, dynamic_adx_threshold, dynamic_atr_upper_limit)
+            if signal == "BUY" and is_a_plus_plus(ind, price_data, sector):
                 a_plus_plus_list.append({
                     'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'],
                     'volume_krw': ind['거래량_krw_billion'], 'atr_ratio': ind['ATR비율'],
                     'target': (ind['종가'] + 2 * ind['ATR']), 'stop': (ind['종가'] - 2 * ind['ATR']),
                     'target_krw': ind['목표가'], 'stop_krw': ind['손절가'],
-                    'quantity': ind['매수가능수량'], 'volume_ratio': ind['거래량비율'], 'RSI': ind['RSI']
+                    'quantity': ind['매수가능수량'], 'volume_ratio': ind['거래량비율'], 'RSI': ind['RSI'],
+                    'sector': sector # 섹터 정보 추가
                 })
+                sector_counts[sector] = sector_counts.get(sector, 0) + 1 # 섹터 카운트 증가
         except Exception as e:
             print(f"⚠️ {ticker} A++ 분석 중 오류: {e}")
             continue
@@ -504,7 +531,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         report_body += "<h2>🌟 나만의 A++ 추천 종목 (고성과 + 안정성)</h2><ul>"
         for s in a_plus_plus_list:
             report_body += f"""
-            <li><b>{s['ticker']}</b>: A++ 종목 (종가 ${s['close']:.2f} ({format_krw(s['close_krw'])}),
+            <li><b>{s['ticker']}</b> ({s['sector']}): A++ 종목 (종가 ${s['close']:.2f} ({format_krw(s['close_krw'])}),
             거래량 {format_krw(s['volume_krw'])}, 거래량비율 {s['volume_ratio']:.1f}x, ATR비율 {s['atr_ratio']:.2f}%,
             RSI {s['RSI']:.2f},
             목표가 ${s['target']:.2f} ({format_krw(s['target_krw'])}), 손절가 ${s['stop']:.2f} ({format_krw(s['stop_krw'])}))
@@ -528,7 +555,8 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
                     continue
                 
                 price_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-                signal, ind = get_turtle_signal(ticker, price_data, vix_value, EXCHANGE_RATE_KRW_USD)
+                sector = get_ticker_sector(ticker)
+                signal, ind = get_turtle_signal(ticker, price_data, vix_value, EXCHANGE_RATE_KRW_USD, dynamic_adx_threshold, dynamic_atr_upper_limit)
                 
                 if signal == "BUY":
                     buy_signals.append({
@@ -536,13 +564,13 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
                         'volume_krw': ind['거래량_krw_billion'], 'atr_ratio': ind['ATR비율'],
                         'target': (ind['종가'] + 2 * ind['ATR']), 'stop': (ind['종가'] - 2 * ind['ATR']),
                         'target_krw': ind['목표가'], 'stop_krw': ind['손절가'],
-                        'volume_ratio': ind['거래량비율'], 'RSI': ind['RSI']
+                        'volume_ratio': ind['거래량비율'], 'RSI': ind['RSI'], 'sector': sector
                     })
                 elif signal == "SELL":
                     sell_signals.append({
                         'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'],
                         'volume_krw': ind['거래량_krw_billion'], 'atr_ratio': ind['ATR비율'],
-                        'volume_ratio': ind['거래량비율'], 'RSI': ind['RSI']
+                        'volume_ratio': ind['거래량비율'], 'RSI': ind['RSI'], 'sector': sector
                     })
             except Exception as e:
                 print(f"⚠️ {ticker} 신호 분석 중 오류: {e}")
@@ -556,7 +584,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         buy_html = ""
         for s in buy_signals:
             buy_html += f"""
-            <li><b>{s['ticker']}</b>: 매수
+            <li><b>{s['ticker']}</b> ({s['sector']}): 매수
                 (종가 ${s['close']:.2f} ({format_krw(s['close_krw'])}), 거래량 {format_krw(s['volume_krw'])}, 거래량비율 {s['volume_ratio']:.1f}x,
                 ATR비율 {s['atr_ratio']:.2f}%, RSI {s['RSI']:.2f}, 목표가 ${s['target']:.2f} ({format_krw(s['target_krw'])}), 손절가 ${s['stop']:.2f} ({format_krw(s['stop_krw'])}))
             </li>
@@ -565,7 +593,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         sell_html = ""
         for s in sell_signals:
             sell_html += f"""
-            <li><b>{s['ticker']}</b>: 매도
+            <li><b>{s['ticker']}</b> ({s['sector']}): 매도
                 (종가 ${s['close']:.2f} ({format_krw(s['close_krw'])}), 거래량 {format_krw(s['volume_krw'])}, 거래량비율 {s['volume_ratio']:.1f}x,
                 ATR비율 {s['atr_ratio']:.2f}%, RSI {s['RSI']:.2f})
             </li>
@@ -585,7 +613,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         tickers_to_backtest = list(data.keys())[:10]
         for ticker in tickers_to_backtest:
             try:
-                result = backtest_strategy(data[ticker])
+                result = backtest_strategy(data[ticker], dynamic_adx_threshold)
                 if result is not None:
                     backtest_results_html += f"<p><b>{ticker}</b>: {result:.2f}%</p>"
                 else:
