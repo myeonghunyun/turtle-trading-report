@@ -175,9 +175,16 @@ def send_email(subject, body):
     """리포트를 이메일로 전송합니다."""
     sender_email = os.getenv("SENDER_EMAIL")
     sender_password = os.getenv("GMAIL_APP_PASSWORD")
-    receiver_email = os.getenv("RECEIVER_EMAIL")
+    
+    # ✅ 여러 수신자 이메일 처리
+    receiver_emails_str = os.getenv("RECEIVER_EMAIL")
+    if not receiver_emails_str:
+        print("❌ 이메일 설정이 누락되었습니다. Secrets를 확인하세요.")
+        return
+        
+    receiver_emails = [email.strip() for email in receiver_emails_str.split(',')]
 
-    if not all([sender_email, sender_password, receiver_email]):
+    if not all([sender_email, sender_password]):
         print("❌ 이메일 설정이 누락되었습니다. Secrets를 확인하세요.")
         return
 
@@ -185,12 +192,12 @@ def send_email(subject, body):
     msg = MIMEText(body_clean, 'html', _charset='utf-8')
     msg['Subject'] = subject
     msg['From'] = sender_email
-    msg['To'] = receiver_email
+    msg['To'] = receiver_emails_str  # To 헤더에는 쉼표로 구분된 문자열 그대로 사용
 
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(sender_email, sender_password)
-            server.sendmail(sender_email, receiver_email, msg.as_string())
+            server.sendmail(sender_email, receiver_emails, msg.as_string()) # sendmail에는 리스트로 전달
         print("✅ 이메일이 성공적으로 전송되었습니다.")
     except Exception as e:
         print(f"❌ 이메일 전송 실패: {e}")
@@ -208,7 +215,11 @@ def read_positions_file(file_path='positions.csv'):
     if not os.path.exists(file_path):
         print(f"⚠️ {file_path} 파일이 없습니다. 빈 포지션으로 시작합니다.")
         return pd.DataFrame(columns=['ticker', 'buy_date', 'buy_price', 'units'])
-    return pd.read_csv(file_path)
+    try:
+        return pd.read_csv(file_path)
+    except Exception as e:
+        print(f"❌ {file_path} 파일 로드 중 오류 발생: {e}")
+        return pd.DataFrame(columns=['ticker', 'buy_date', 'buy_price', 'units'])
 
 def backtest_strategy(ticker_data, dynamic_adx_threshold):
     """단순 백테스팅을 통해 전략의 수익률과 최대 낙폭(MDD)을 계산합니다."""
@@ -267,7 +278,6 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
         return total_return, max_drawdown
     return None, None
 
-# ================ 메인 실행 ==================
 if __name__ == '__main__':
     print("🚀 터틀 트레이딩 리포트 시작...")
     REPORT_TYPE = os.getenv("REPORT_TYPE", "morning_plan")
@@ -402,7 +412,7 @@ if __name__ == '__main__':
                 a_plus_plus_list.append({
                     'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'],
                     'volume_krw': ind['거래량_krw_billion'], 'atr_ratio': ind['ATR비율'],
-                    'target': (ind['종가'] + 2 * ind['ATR']), 'stop': (ind['종가'] - 2 * ind['ATR']),
+                    'target': ind['목표가_usd'], 'stop': ind['손절가_usd'],
                     'target_krw': ind['목표가'], 'stop_krw': ind['손절가'],
                     'quantity': ind['매수가능수량'], 'volume_ratio': ind['거래량비율'], 'RSI': ind['RSI'],
                     'sector': sector
@@ -589,7 +599,6 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     """
     report_body += market_condition_html
 
-    # 보유 종목에 대한 신호
     if pyramid_signals or sell_signals:
         report_body += "<h2>🚀 현재 포트폴리오 신호</h2>"
         if pyramid_signals:
@@ -643,6 +652,6 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         report_body += "</table>"
     else:
         report_body += "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2><p>A++ 종목이 없어 백테스팅을 실행할 수 없습니다.</p>"
-
+    
     send_email(subject, report_body)
     print("✅ 리포트 생성 및 전송 완료!")
