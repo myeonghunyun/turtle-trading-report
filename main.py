@@ -316,23 +316,23 @@ if __name__ == '__main__':
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
-
-    EXCHANGE_RATE_KRW_USD = 1372.88
+    
+    EXCHANGE_RATE_KRW_USD = 1389.40
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if forex_data is not None and not forex_data.empty:
-            EXCHANGE_RATE_KRW_USD = float(forex_data['Close'].iloc[-1])
+            EXCHANGE_RATE_KRW_USD = float(forex_data['Close'].iloc[0])
         else:
             print("⚠️ 환율 데이터가 비어 있습니다. 기본값 사용")
     except Exception as e:
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 30.0
+    vix_value = 15.09
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if vix_data is not None and not vix_data.empty and not vix_data['Close'].dropna().empty:
-            vix_value = float(vix_data['Close'].dropna().iloc[-1])
+            vix_value = float(vix_data['Close'].dropna().iloc[0])
         else:
             print("⚠️ VIX 데이터가 비어 있습니다. 기본값 사용")
     except Exception as e:
@@ -424,7 +424,6 @@ if __name__ == '__main__':
             last_buy_price = positions_dict[ticker]['buy_price'] if is_holding else None
             units = positions_dict[ticker]['units'] if is_holding else 0
 
-            # ✅ 함수 호출 시 인자 수정
             signal, ind = get_turtle_signal(price_data, vix_value, EXCHANGE_RATE_KRW_USD, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=last_buy_price, units=units)
 
             if is_holding:
@@ -450,7 +449,7 @@ if __name__ == '__main__':
                 })
                 sector_counts[sector] = sector_counts.get(sector, 0) + 1
         except Exception as e:
-            print(f"⚠️ {ticker} 분석 중 오류: {e}")
+            print(f"⚠️ 분석 중 오류: {e}")
             continue
 
     a_plus_plus_list = sorted(a_plus_plus_list, key=lambda x: x['atr_ratio'])
@@ -584,9 +583,9 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         </tr>
         <tr>
             <td><b>전망 PER</b></td>
-            <td>{forward_pe:.1f}배</td>
+            <td>{FORWARD_PER:.1f}배</td>
             <td>15~16: 평균<br>> 20: 고평가</td>
-            <td>{'🔴 고평가' if forward_pe > 20 else '🟠 다소 높음' if forward_pe > 18 else '🟢 정상'}</td>
+            <td>{'🔴 고평가' if FORWARD_PER > 20 else '🟠 다소 높음' if FORWARD_PER > 18 else '🟢 정상'}</td>
         </tr>
     </table>
 
@@ -594,7 +593,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     <ul>
     """
 
-    if vix_value < 20 and disparity_sp500 > 10 and forward_pe > 20:
+    if vix_value < 20 and disparity_sp500 > 10 and FORWARD_PER > 20:
         market_condition_html += """
         <li><b>🔴 시장 과열 단계</b><br>
             → VIX 낮음, 지수 과열, 밸류에이션 높음<br>
@@ -637,7 +636,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
             for s in pyramid_signals:
                 report_body += f"""
                 <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 추가 매수 조건 충족
-                (현재가 {s['close']:.2f}, 추가 매수 가격 ${s['pyramid_price_usd']:.2f})</li>
+                (현재가 {format_krw(s['close_krw'])}, 추가 매수 가격 {format_krw(s['pyramid_price_krw'])})</li>
                 """
             report_body += "</ul>"
         if sell_signals:
@@ -645,7 +644,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
             for s in sell_signals:
                 report_body += f"""
                 <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 손절/익절 조건 충족
-                (현재가 ${s['close']:.2f}, 손절가 ${s['stop_price_usd']:.2f})</li>
+                (현재가 {format_krw(s['close_krw'])}, 손절가 {format_krw(s['stop_price_krw'])})</li>
                 """
             report_body += "</ul>"
         report_body += "<hr><br/>"
@@ -654,10 +653,10 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         report_body += "<h2>🌟 나만의 A++ 추천 종목 (고성과 + 안정성)</h2><ul>"
         for s in a_plus_plus_list:
             report_body += f"""
-            <li><b>{s['ticker']}</b> ({s['sector']}): A++ 종목 (종가 ${s['close']:.2f},
-            거래량 ${s['volume_bil']:.2f}B, 거래량비율 {s['volume_ratio']:.1f}x, ATR비율 {s['atr_ratio']:.2f}%,
+            <li><b>{s['ticker']}</b> ({s['sector']}): A++ 종목 (종가 ${s['close']:.2f} ({format_krw(s['close_krw'])}),
+            거래량 {format_krw(s['volume_krw'])}, 거래량비율 {s['volume_ratio']:.1f}x, ATR비율 {s['atr_ratio']:.2f}%,
             RSI {s['RSI']:.2f},
-            목표가 ${s['target']:.2f}, 손절가 ${s['stop']:.2f})
+            목표가 ${s['target']:.2f} ({format_krw(s['target_krw'])}), 손절가 ${s['stop']:.2f} ({format_krw(s['stop_krw'])}))
             → <b>매수 가능 수량: {s['quantity']:,}주</b></li>
             """
         report_body += "</ul><hr><br/>"
