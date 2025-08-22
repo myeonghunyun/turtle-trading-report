@@ -307,25 +307,25 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
         return total_return, max_drawdown
     return None, None
 
-def generate_detailed_stock_report_html(s, action):
+def generate_detailed_stock_report_html(s, action, indicators):
     """
     주식 매매 리포트의 HTML 항목을 생성하는 함수
     """
     target_stop_html = ""
     if action == 'BUY':
-        target_stop_html = f"→ <b>매수 가능 수량</b>: {s['quantity']:,}주<br>→ 목표가: ${s['target']:.2f}, 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>매수 가능 수량</b>: {s['quantity']:,}주<br>→ 목표가: ${indicators['목표가_usd']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == 'PYRAMID_BUY':
-        target_stop_html = f"→ <b>추가 매수 가격</b>: ${s['pyramid_price_usd']:.2f} (현재 {s['units']} 유닛 보유)<br>→ 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>추가 매수 가격</b>: ${indicators['추가매수가_usd']:.2f} (현재 {s['units']} 유닛 보유)<br>→ 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == 'SELL':
-        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주<br>→ 매도 가격: ${s['close']:.2f}, 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주<br>→ 매도 가격: ${indicators['종가']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == '보유':
-        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주 (추세 유지 중)<br>→ 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주 (추세 유지 중)<br>→ 손절가: ${indicators['손절가_usd']:.2f}"
 
     return f"""
     <li>
-        <b>{s['ticker']}</b> ({s['sector']}): {action}
+        <b>{s['ticker']}</b> ({s['sector']}) : {action}
         <br>
-        (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+        (종가 ${indicators['종가']:.2f}, ATR: ${indicators['ATR']:.2f}, ATR비율: {indicators['ATR비율']:.2f}%, MA200: ${indicators['MA200']:.2f}, 괴리율: {indicators['괴리율']:.2f}%, ADX: {indicators['ADX']:.2f}, +DI: {indicators['+DI']:.2f}, -DI: {indicators['-DI']:.2f})
         <br>
         {target_stop_html}
     </li>
@@ -455,13 +455,15 @@ if __name__ == '__main__':
                     pyramid_signals.append({
                         'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'pyramid_price_krw': ind['추가매수가'],
                         'units': units, 'sector': sector, 'atr': ind['ATR'], 'atr_ratio': ind['ATR비율'],
-                        'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14']
+                        'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14'],
+                        'target': ind['목표가_usd'], 'stop': ind['손절가_usd']
                     })
                 elif signal == "SELL":
                     sell_signals.append({
                         'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'stop_price_krw': ind['손절가'],
                         'units': units, 'sector': sector, 'atr': ind['ATR'], 'atr_ratio': ind['ATR비율'],
-                        'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14']
+                        'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14'],
+                        'target': ind['목표가_usd'], 'stop': ind['손절가_usd']
                     })
             
             if signal == "BUY" and is_a_plus_plus(ind, price_data, sector) and not is_holding:
@@ -661,41 +663,19 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         if pyramid_signals:
             report_body += "<h3>🟢 Pyramiding (추가 매수) 신호</h3><ul>"
             for s in pyramid_signals:
-                report_body += f"""
-                <li><b>{s['ticker']}</b> ({s['sector']}): 현재 보유 수량 {s['units']}주. 추가 매수 조건 충족
-                <br>
-                (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
-                <br>
-                → 추가 매수 가격: ${s['pyramid_price_usd']:.2f}, 손절가: ${s['stop']:.2f}
-                </li>
-                """
+                report_body += generate_detailed_stock_report_html(s, 'PYRAMID_BUY')
             report_body += "</ul>"
         if sell_signals:
             report_body += "<h3>🔴 SELL (청산) 신호</h3><ul>"
             for s in sell_signals:
-                report_body += f"""
-                <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 손절/익절 조건 충족
-                <br>
-                (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
-                <br>
-                → 매도 가격: ${s['close']:.2f}, 손절가: ${s['stop']:.2f}
-                </li>
-                """
+                report_body += generate_detailed_stock_report_html(s, 'SELL')
             report_body += "</ul>"
         report_body += "<hr><br/>"
         
     if a_plus_plus_list:
         report_body += "<h2>🌟 나만의 A++ 추천 종목 (고성과 + 안정성)</h2><ul>"
         for s in a_plus_plus_list:
-            report_body += f"""
-            <li><b>{s['ticker']}</b> ({s['sector']}): A++ 종목 (종가 ${s['close']:.2f},
-            ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
-            <br>
-            → <b>매수 가능 수량: {s['quantity']:,}주</b>
-            <br>
-            → 목표가: ${s['target']:.2f}, 손절가: ${s['stop']:.2f}
-            </li>
-            """
+            report_body += generate_detailed_stock_report_html(s, 'BUY')
         report_body += "</ul><hr><br/>"
     else:
         report_body += "<h2>🌟 나만의 A++ 추천 종목</h2><p>현재 기준에 맞는 A++ 종목이 없습니다.</p><hr><br/>"
