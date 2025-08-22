@@ -120,7 +120,7 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
         last_10_low = ticker_data['Low'].rolling(10).min().iloc[-1] if len(ticker_data) >= 10 else last_close
 
         avg_volume_20d = ticker_data['Volume'].rolling(window=20).mean().iloc[-1]
-        volume_ratio = last_volume / avg_volume_2d if avg_volume_2d > 0 else 0
+        volume_ratio = last_volume / avg_volume_20d if avg_volume_20d > 0 else 0
         
         last_vma20 = last_row['VMA20']
         volume_above_vma = last_volume > last_vma20 if last_vma20 > 0 else False
@@ -321,16 +321,15 @@ def generate_detailed_stock_report_html(s, action):
     elif action == '보유':
         target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주 (추세 유지 중)<br>→ 손절가: ${s['stop']:.2f}"
 
-    report_html = f"""
+    return f"""
     <li>
-        <b>{s['ticker']}</b> ({s['sector']}) : {action}
+        <b>{s['ticker']}</b> ({s['sector']}): {action}
         <br>
         (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
         <br>
         {target_stop_html}
     </li>
     """
-    return report_html
 
 # ================ 메인 실행 ==================
 if __name__ == '__main__':
@@ -664,7 +663,8 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
             for s in pyramid_signals:
                 report_body += f"""
                 <li><b>{s['ticker']}</b> ({s['sector']}): 현재 보유 수량 {s['units']}주. 추가 매수 조건 충족
-                (현재가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+                <br>
+                (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
                 <br>
                 → 추가 매수 가격: ${s['pyramid_price_usd']:.2f}, 손절가: ${s['stop']:.2f}
                 </li>
@@ -675,7 +675,8 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
             for s in sell_signals:
                 report_body += f"""
                 <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 손절/익절 조건 충족
-                (현재가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+                <br>
+                (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
                 <br>
                 → 매도 가격: ${s['close']:.2f}, 손절가: ${s['stop']:.2f}
                 </li>
