@@ -33,7 +33,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Turtle Trading Script (Morning)
-        if: github.event.schedule == '0 22 * * *'
+        if: github.event.schedule == '0 22 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'morning_plan')
         env:
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
@@ -43,7 +43,7 @@ jobs:
           python main.py
 
       - name: Run Turtle Trading Script (Evening)
-        if: github.event.schedule == '0 12 * * *'
+        if: github.event.schedule == '0 12 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'evening_realtime')
         env:
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
