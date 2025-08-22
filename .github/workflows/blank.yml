@@ -2,8 +2,8 @@ name: Turtle Trading Report
 
 on:
   schedule:
-    # 한국 시간으로 오전 7시, 오후 10시에 실행 (UTC 기준)
-    - cron: '0 22,13 * * *'
+    # 한국 시간으로 오전 7시, 오후 9시에 실행 (UTC 기준)
+    - cron: '0 22,12 * * *'
   workflow_dispatch:
     inputs:
       report_type:
@@ -32,12 +32,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Turtle Trading Script
+      - name: Run Turtle Trading Script (Morning)
+        if: github.event.schedule == '0 22 * * *'
         env:
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
-          REPORT_TYPE: ${{ github.event.inputs.report_type || (github.event.schedule == '0 22 * * *' && 'morning_plan') || 'evening_realtime' }}
+          REPORT_TYPE: 'morning_plan'
         run: |
-          echo "Running report for: ${{ env.REPORT_TYPE }}"
+          python main.py
+
+      - name: Run Turtle Trading Script (Evening)
+        if: github.event.schedule == '0 12 * * *'
+        env:
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+          REPORT_TYPE: 'evening_realtime'
+        run: |
           python main.py
