@@ -201,43 +201,6 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
         print(f"❌ 분석 중 오류: {e}")
         return "오류", {}
 
-def format_krw(amount):
-    """금액을 '만원' 또는 '억원' 단위로 포맷팅합니다."""
-    if amount >= 100000000:
-        return f"{amount / 100000000:,.1f}억원"
-    else:
-        return f"{amount / 10000:,.0f}만원"
-
-def send_email(subject, body):
-    """리포트를 이메일로 전송합니다."""
-    sender_email = os.getenv("SENDER_EMAIL")
-    sender_password = os.getenv("GMAIL_APP_PASSWORD")
-    
-    receiver_emails_str = os.getenv("RECEIVER_EMAIL")
-    if not receiver_emails_str:
-        print("❌ 이메일 설정이 누락되었습니다. Secrets를 확인하세요.")
-        return
-        
-    receiver_emails = [email.strip() for email in receiver_emails_str.split(',')]
-
-    if not all([sender_email, sender_password]):
-        print("❌ 이메일 설정이 누락되었습니다. Secrets를 확인하세요.")
-        return
-
-    body_clean = body.replace('\xa0', ' ').replace('\u00A0', ' ')
-    msg = MIMEText(body_clean, 'html', _charset='utf-8')
-    msg['Subject'] = subject
-    msg['From'] = sender_email
-    msg['To'] = receiver_emails_str
-
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(sender_email, sender_password)
-            server.sendmail(sender_email, receiver_emails, msg.as_string())
-        print("✅ 이메일이 성공적으로 전송되었습니다.")
-    except Exception as e:
-        print(f"❌ 이메일 전송 실패: {e}")
-
 def get_ticker_sector_industry(ticker):
     """yfinance를 통해 티커의 섹터와 산업 정보를 가져옵니다."""
     try:
@@ -314,51 +277,31 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
         return total_return, max_drawdown
     return None, None
 
-def generate_detailed_stock_report_html(s, action):
+def generate_detailed_stock_report_html(s, action, indicators):
     """
     주식 매매 리포트의 HTML 항목을 생성하는 함수
     """
+    # 추가 매수/보유/매도 시점에 따라 다른 정보 제공
+    target_stop_html = ""
     if action == 'BUY':
-        return f"""
-        <li>
-            <b>{s['ticker']}</b> ({s['sector']}): BUY (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
-            <br>
-            → <b>매수 가능 수량: {s['quantity']:,}주</b>
-            <br>
-            → 목표가: ${s['target']:.2f}, 손절가: ${s['stop']:.2f}
-        </li>
-        """
+        target_stop_html = f"→ **매수 가능 수량**: {s['quantity']:,}주<br>→ 목표가: ${s['target']:.2f}, 손절가: ${s['stop']:.2f}"
     elif action == 'PYRAMID_BUY':
-        return f"""
-        <li>
-            <b>{s['ticker']}</b> ({s['sector']}): PYRAMID_BUY (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
-            <br>
-            → <b>추가 매수 가격: ${s['pyramid_price_usd']:.2f}</b> (현재 {s['units']} 유닛 보유)
-            <br>
-            → 손절가: ${s['stop']:.2f}
-        </li>
-        """
+        target_stop_html = f"→ **추가 매수 가격**: ${indicators['추가매수가_usd']:.2f} (현재 {s['units']} 유닛 보유)<br>→ 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == 'SELL':
-        return f"""
-        <li>
-            <b>{s['ticker']}</b> ({s['sector']}): SELL (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
-            <br>
-            → <b>현재 보유 수량: {s['units']}주</b>
-            <br>
-            → 매도 가격: ${s['close']:.2f}, 손절가: ${s['stop']:.2f}
-        </li>
-        """
+        target_stop_html = f"→ **현재 보유 수량**: {s['units']}주<br>→ 매도 가격: ${indicators['종가']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == '보유':
-        return f"""
-        <li>
-            <b>{s['ticker']}</b> ({s['sector']}): HOLD (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
-            <br>
-            → <b>현재 보유 수량: {s['units']}주</b> (추세 유지 중)
-            <br>
-            → 손절가: ${s['stop']:.2f}
-        </li>
-        """
-    return ""
+        target_stop_html = f"→ **현재 보유 수량**: {s['units']}주 (추세 유지 중)<br>→ 손절가: ${indicators['손절가_usd']:.2f}"
+
+    report_html = f"""
+    <li>
+        <b>{s['ticker']}</b> ({s['sector']}) : {action}
+        <br>
+        (종가 ${indicators['종가']:.2f}, ATR: ${indicators['ATR']:.2f}, ATR비율: {indicators['ATR비율']:.2f}%, MA200: ${indicators['MA200']:.2f}, 괴리율: {indicators['괴리율']:.2f}%, ADX: {indicators['ADX']:.2f}, +DI: {indicators['+DI']:.2f}, -DI: {indicators['-DI']:.2f})
+        <br>
+        {target_stop_html}
+    </li>
+    """
+    return report_html
 
 
 # ================ 메인 실행 ==================
@@ -371,7 +314,7 @@ if __name__ == '__main__':
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    EXCHANGE_RATE_KRW_USD = 1389.75
+    EXCHANGE_RATE_KRW_USD = 1394.00
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if forex_data is not None and not forex_data.empty:
@@ -382,7 +325,7 @@ if __name__ == '__main__':
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 14.49
+    vix_value = 15.09
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if vix_data is not None and not vix_data.empty and not vix_data['Close'].dropna().empty:
@@ -472,7 +415,7 @@ if __name__ == '__main__':
     for ticker, price_data in data.items():
         try:
             price_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-            sector, industry = get_ticker_sector(ticker)
+            sector, industry = get_ticker_sector_industry(ticker)
             
             is_holding = ticker in positions_dict
             last_buy_price = positions_dict[ticker]['buy_price'] if is_holding else None
@@ -527,7 +470,7 @@ if __name__ == '__main__':
         subtitle = "장 시작 직전, <b>프리마켓 실시간 데이터</b>를 반영한 <b>최종 결정용 리포트</b>입니다."
         timing_note = "📌 이 리포트는 프리마켓 가격을 반영했습니다. 매수 주문을 위한 최종 확인이 필요합니다."
     
-    subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {forward_pe:.1f})"
+    subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {FORWARD_PER:.1f})"
 
     report_body = f"""
     <h1>{title}</h1>
@@ -704,8 +647,9 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
             for s in sell_signals:
                 report_body += f"""
                 <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 손절/익절 조건 충족
+                (현재가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
                 <br>
-                → 현재가: ${s['close']:.2f}, 손절가: ${s['stop_price_usd']:.2f}
+                → 매도 가격: ${s['close']:.2f}, 손절가: ${s['stop']:.2f}
                 </li>
                 """
             report_body += "</ul>"
