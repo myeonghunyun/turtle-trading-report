@@ -147,21 +147,24 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
                     "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
                     "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
                     "매수포함": True, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
-                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "atr_ratio": atr_ratio
+                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "atr_ratio": atr_ratio,
+                    "volume_krw_billion": (last_volume * last_close * exchange_rate) / 1e8, "volume_ratio": volume_ratio
                 }
             elif last_close > pyramid_price and units < MAX_UNITS:
                 return "PYRAMID_BUY", {
                     "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
                     "추가매수가": round(pyramid_price * exchange_rate, 0), "추가매수가_usd": pyramid_price,
                     "매수포함": True, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
-                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "atr_ratio": atr_ratio
+                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "atr_ratio": atr_ratio,
+                    "volume_krw_billion": (last_volume * last_close * exchange_rate) / 1e8, "volume_ratio": volume_ratio
                 }
             else:
                 return "보유", {
                     "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
                     "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
                     "매수포함": True, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
-                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "atr_ratio": atr_ratio
+                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "atr_ratio": atr_ratio,
+                    "volume_krw_billion": (last_volume * last_close * exchange_rate) / 1e8, "volume_ratio": volume_ratio
                 }
 
         is_above_ma200 = last_close > last_ma200
@@ -198,6 +201,13 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
         print(f"❌ 분석 중 오류: {e}")
         return "오류", {}
 
+def format_krw(amount):
+    """금액을 '만원' 또는 '억원' 단위로 포맷팅합니다."""
+    if amount >= 100000000:
+        return f"{amount / 100000000:,.1f}억원"
+    else:
+        return f"{amount / 10000:,.0f}만원"
+
 def send_email(subject, body):
     """리포트를 이메일로 전송합니다."""
     sender_email = os.getenv("SENDER_EMAIL")
@@ -228,13 +238,13 @@ def send_email(subject, body):
     except Exception as e:
         print(f"❌ 이메일 전송 실패: {e}")
 
-def get_ticker_sector(ticker):
-    """yfinance를 통해 티커의 섹터 정보를 가져옵니다."""
+def get_ticker_sector_industry(ticker):
+    """yfinance를 통해 티커의 섹터와 산업 정보를 가져옵니다."""
     try:
         info = yf.Ticker(ticker).info
-        return info.get('sector', 'Unknown')
+        return info.get('sector', 'Unknown'), info.get('industry', 'Unknown')
     except:
-        return 'Unknown'
+        return 'Unknown', 'Unknown'
 
 def read_positions_file(file_path='positions.csv'):
     """포지션 파일을 읽어와서 DataFrame으로 반환합니다."""
@@ -304,50 +314,51 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
         return total_return, max_drawdown
     return None, None
 
-def generate_detailed_stock_report_html(s, action, indicators):
+def generate_detailed_stock_report_html(s, action):
     """
-    주식 매매 리포트를 생성하는 함수. 지표 분석 및 판단을 포함.
+    주식 매매 리포트의 HTML 항목을 생성하는 함수
     """
-    report_html = f"""
-    <li>
-        <b>{s['ticker']}</b> ({s['sector']}): {action} (종가 ${indicators['종가']:.2f}, ATR: ${indicators['ATR']:.2f}, ATR비율: {indicators['ATR비율']:.2f}%, MA200: ${indicators['MA200']:.2f}, 괴리율: {indicators['괴리율']:.2f}%, ADX: {indicators['ADX']:.2f}, +DI: {indicators['+DI']:.2f}, -DI: {indicators['-DI']:.2f})
-    """
-    
     if action == 'BUY':
-        report_html += f"""
-        <br>
-        → <b>매수 가능 수량: {indicators['매수가능수량']:,}주</b>
-        <br>
-        → 목표가: ${indicators['목표가_usd']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}
-        <br>
+        return f"""
+        <li>
+            <b>{s['ticker']}</b> ({s['sector']}): BUY (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+            <br>
+            → <b>매수 가능 수량: {s['quantity']:,}주</b>
+            <br>
+            → 목표가: ${s['target']:.2f}, 손절가: ${s['stop']:.2f}
+        </li>
         """
     elif action == 'PYRAMID_BUY':
-        report_html += f"""
-        <br>
-        → <b>추가 매수 가능 수량: {indicators['매수가능수량']:,}주</b> (현재 {s['units']} 유닛 보유)
-        <br>
-        → 추가 매수 가격: ${indicators['추가매수가_usd']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}
-        <br>
+        return f"""
+        <li>
+            <b>{s['ticker']}</b> ({s['sector']}): PYRAMID_BUY (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+            <br>
+            → <b>추가 매수 가격: ${s['pyramid_price_usd']:.2f}</b> (현재 {s['units']} 유닛 보유)
+            <br>
+            → 손절가: ${s['stop']:.2f}
+        </li>
         """
     elif action == 'SELL':
-        report_html += f"""
-        <br>
-        → <b>현재 보유 수량: {s['units']}주</b>
-        <br>
-        → 매도 가격: ${indicators['종가']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}
-        <br>
+        return f"""
+        <li>
+            <b>{s['ticker']}</b> ({s['sector']}): SELL (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+            <br>
+            → <b>현재 보유 수량: {s['units']}주</b>
+            <br>
+            → 매도 가격: ${s['close']:.2f}, 손절가: ${s['stop']:.2f}
+        </li>
         """
     elif action == '보유':
-        report_html += f"""
-        <br>
-        → <b>현재 보유 수량: {s['units']}주</b> (추세 유지 중)
-        <br>
-        → 손절가: ${indicators['손절가_usd']:.2f}
-        <br>
+        return f"""
+        <li>
+            <b>{s['ticker']}</b> ({s['sector']}): HOLD (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+            <br>
+            → <b>현재 보유 수량: {s['units']}주</b> (추세 유지 중)
+            <br>
+            → 손절가: ${s['stop']:.2f}
+        </li>
         """
-    
-    report_html += "</li>"
-    return report_html
+    return ""
 
 
 # ================ 메인 실행 ==================
@@ -461,7 +472,7 @@ if __name__ == '__main__':
     for ticker, price_data in data.items():
         try:
             price_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-            sector = get_ticker_sector(ticker)
+            sector, industry = get_ticker_sector(ticker)
             
             is_holding = ticker in positions_dict
             last_buy_price = positions_dict[ticker]['buy_price'] if is_holding else None
@@ -490,7 +501,7 @@ if __name__ == '__main__':
                     'target': ind['목표가_usd'], 'stop': ind['손절가_usd'],
                     'target_krw': ind['목표가'], 'stop_krw': ind['손절가'],
                     'quantity': ind['매수가능수량'], 'volume_ratio': ind['거래량비율'], 'RSI': ind['RSI'],
-                    'sector': sector, 'industry': yf.Ticker(ticker).info.get('industry', 'Unknown'),
+                    'sector': sector, 'industry': industry,
                     'atr': ind['ATR'], 'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14']
                 })
                 sector_counts[sector] = sector_counts.get(sector, 0) + 1
@@ -516,7 +527,7 @@ if __name__ == '__main__':
         subtitle = "장 시작 직전, <b>프리마켓 실시간 데이터</b>를 반영한 <b>최종 결정용 리포트</b>입니다."
         timing_note = "📌 이 리포트는 프리마켓 가격을 반영했습니다. 매수 주문을 위한 최종 확인이 필요합니다."
     
-    subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {FORWARD_PER:.1f})"
+    subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {forward_pe:.1f})"
 
     report_body = f"""
     <h1>{title}</h1>
@@ -682,10 +693,9 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
             for s in pyramid_signals:
                 report_body += f"""
                 <li><b>{s['ticker']}</b> ({s['sector']}): 현재 보유 수량 {s['units']}주. 추가 매수 조건 충족
+                (현재가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
                 <br>
-                → 현재가: ${s['close']:.2f}, 추가 매수 가격: ${s['pyramid_price_usd']:.2f}
-                <br>
-                → 목표가: ${s['target']:.2f}, 손절가: ${s['stop']:.2f}
+                → 추가 매수 가격: ${s['pyramid_price_usd']:.2f}, 손절가: ${s['stop_price_usd']:.2f}
                 </li>
                 """
             report_body += "</ul>"
@@ -695,7 +705,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
                 report_body += f"""
                 <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 손절/익절 조건 충족
                 <br>
-                → 현재가: ${s['close']:.2f}, 손절가: ${s['stop']:.2f}
+                → 현재가: ${s['close']:.2f}, 손절가: ${s['stop_price_usd']:.2f}
                 </li>
                 """
             report_body += "</ul>"
