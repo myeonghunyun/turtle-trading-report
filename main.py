@@ -48,7 +48,7 @@ SETTINGS = read_settings()
 TOTAL_SEED_KRW = SETTINGS['TOTAL_SEED_KRW']
 MAX_LOSS_RATE = SETTINGS['MAX_LOSS_RATE']
 VOLUME_THRESHOLD = SETTINGS['VOLUME_THRESHOLD']
-ADX_THRESHOLD = SETINGS['ADX_THRESHOLD']
+ADX_THRESHOLD = SETTINGS['ADX_THRESHOLD']
 ATR_UPPER_LIMIT = SETTINGS['ATR_UPPER_LIMIT']
 SECTOR_LIMIT = SETTINGS['SECTOR_LIMIT']
 FORWARD_PER = SETTINGS['FORWARD_PER']
@@ -307,25 +307,25 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
         return total_return, max_drawdown
     return None, None
 
-def generate_detailed_stock_report_html(s, action):
+def generate_detailed_stock_report_html(s, action, indicators):
     """
     주식 매매 리포트의 HTML 항목을 생성하는 함수
     """
     target_stop_html = ""
     if action == 'BUY':
-        target_stop_html = f"→ <b>매수 가능 수량</b>: {s['quantity']:,}주<br>→ 목표가: ${s['target']:.2f}, 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>매수 가능 수량</b>: {s['quantity']:,}주<br>→ 목표가: ${indicators['목표가_usd']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == 'PYRAMID_BUY':
-        target_stop_html = f"→ <b>추가 매수 가격</b>: ${s['pyramid_price_usd']:.2f} (현재 {s['units']} 유닛 보유)<br>→ 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>추가 매수 가격</b>: ${indicators['추가매수가_usd']:.2f} (현재 {s['units']} 유닛 보유)<br>→ 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == 'SELL':
-        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주<br>→ 매도 가격: ${s['close']:.2f}, 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주<br>→ 매도 가격: ${indicators['종가']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == '보유':
-        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주 (추세 유지 중)<br>→ 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주 (추세 유지 중)<br>→ 손절가: ${indicators['손절가_usd']:.2f}"
 
     return f"""
     <li>
         <b>{s['ticker']}</b> ({s['sector']}): {action}
         <br>
-        (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+        (종가 ${indicators['종가']:.2f}, ATR: ${indicators['ATR']:.2f}, ATR비율: {indicators['ATR비율']:.2f}%, MA200: ${indicators['MA200']:.2f}, 괴리율: {indicators['괴리율']:.2f}%, ADX: {indicators['ADX']:.2f}, +DI: {indicators['+DI']:.2f}, -DI: {indicators['-DI']:.2f})
         <br>
         {target_stop_html}
     </li>
@@ -341,7 +341,7 @@ if __name__ == '__main__':
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    EXCHANGE_RATE_KRW_USD = 1394.00
+    EXCHANGE_RATE_KRW_USD = 1391.18
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if forex_data is not None and not forex_data.empty:
@@ -352,7 +352,7 @@ if __name__ == '__main__':
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 15.09
+    vix_value = 14.99
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if vix_data is not None and not vix_data.empty and not vix_data['Close'].dropna().empty:
@@ -455,15 +455,13 @@ if __name__ == '__main__':
                     pyramid_signals.append({
                         'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'pyramid_price_krw': ind['추가매수가'],
                         'units': units, 'sector': sector, 'atr': ind['ATR'], 'atr_ratio': ind['ATR비율'],
-                        'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14'],
-                        'pyramid_price_usd': ind['추가매수가_usd'], 'stop': ind['손절가_usd']
+                        'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14']
                     })
                 elif signal == "SELL":
                     sell_signals.append({
                         'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'stop_price_krw': ind['손절가'],
                         'units': units, 'sector': sector, 'atr': ind['ATR'], 'atr_ratio': ind['ATR비율'],
-                        'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14'],
-                        'stop': ind['손절가_usd']
+                        'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14']
                     })
             
             if signal == "BUY" and is_a_plus_plus(ind, price_data, sector) and not is_holding:
