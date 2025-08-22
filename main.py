@@ -1,3 +1,4 @@
+# main.py
 import yfinance as yf
 import pandas as pd
 import smtplib
@@ -145,19 +146,22 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
                 return "SELL", {
                     "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
                     "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
-                    "매수포함": True
+                    "매수포함": True, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
+                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "atr_ratio": atr_ratio
                 }
             elif last_close > pyramid_price and units < MAX_UNITS:
                 return "PYRAMID_BUY", {
                     "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
                     "추가매수가": round(pyramid_price * exchange_rate, 0), "추가매수가_usd": pyramid_price,
-                    "매수포함": True
+                    "매수포함": True, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
+                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "atr_ratio": atr_ratio
                 }
             else:
                 return "보유", {
                     "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
                     "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
-                    "매수포함": True
+                    "매수포함": True, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
+                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "atr_ratio": atr_ratio
                 }
 
         is_above_ma200 = last_close > last_ma200
@@ -193,13 +197,6 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
     except Exception as e:
         print(f"❌ 분석 중 오류: {e}")
         return "오류", {}
-
-def format_krw(amount):
-    """금액을 '만원' 또는 '억원' 단위로 포맷팅합니다."""
-    if amount >= 100000000:
-        return f"{amount / 100000000:,.1f}억원"
-    else:
-        return f"{amount / 10000:,.0f}만원"
 
 def send_email(subject, body):
     """리포트를 이메일로 전송합니다."""
@@ -307,77 +304,53 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
         return total_return, max_drawdown
     return None, None
 
-# --- 지표 판단 로직 추가 ---
-def generate_detailed_stock_report(
-    ticker,
-    action,
-    close_price,
-    volume,
-    atr_ratio,
-    target_price,
-    stop_loss,
-    atr_value,
-    sector,
-    industry,
-    ma200,
-    divergence_ratio,
-    adx,
-    plus_di,
-    minus_di,
-    volume_ratio,
-    quantity=None
-):
+def generate_detailed_stock_report_html(s, action, indicators):
     """
     주식 매매 리포트를 생성하는 함수. 지표 분석 및 판단을 포함.
     """
-    # ADX 현재 판단
-    adx_judgment = f"ADX가 {adx:.2f}로, **추세가 강하게 형성**되고 있음을 나타냅니다." if adx >= 25 else f"ADX가 {adx:.2f}로, 추세가 뚜렷하지 않습니다."
-
-    # DI 현재 판단
-    if plus_di > minus_di:
-        di_judgment = f"+DI({plus_di:.2f})가 -DI({minus_di:.2f})보다 높아 **상승 추세가 하락 추세보다 강합니다.**"
-        if plus_di / minus_di >= 2:
-            di_judgment = f"+DI({plus_di:.2f})가 -DI({minus_di:.2f})보다 월등히 높아 **매우 강한 상승 추세**가 나타나고 있습니다."
-    else:
-        di_judgment = f"-DI({minus_di:.2f})가 +DI({plus_di:.2f})보다 높아 **하락 추세가 상승 추세보다 강합니다.**"
-
-    # 거래량 비율 현재 판단
-    if volume_ratio >= 1.5:
-        volume_judgment = f"거래량이 평소보다 {volume_ratio:.2f}배 많아 **강한 매수세**가 유입되고 있음을 보여줍니다."
-    elif volume_ratio >= 1.0:
-        volume_judgment = f"거래량이 평소보다 {volume_ratio:.2f}배 많아 **관심이 높은** 상태입니다."
-    else:
-        volume_judgment = f"거래량이 평소보다 {volume_ratio:.2f}배 적어 거래량이 부진한 상태입니다."
-
     report_html = f"""
-<div style='border:1px solid #ddd; padding:15px; border-radius:10px; margin-bottom: 20px;'>
-    <h3>{ticker}: {action}</h3>
-    <p><b>종가</b>: ${close_price:.2f}, <b>거래량</b>: {volume:,}주, <b>ATR</b>: ${atr_value:.2f}, <b>ATR비율</b>: {atr_ratio:.2f}%<br>
-    <b>MA200</b>: ${ma200:.2f}, <b>괴리율</b>: {divergence_ratio:.2f}%</p>
-    <p><b>목표가</b>: ${target_price:.2f}, <b>손절가</b>: ${stop_loss:.2f}</p>
-    <p><b>섹터</b>: {sector}, <b>산업</b>: {industry}</p>
+    <li>
+        <b>{s['ticker']}</b> ({s['sector']}): {action} (종가 ${indicators['종가']:.2f}, ATR: ${indicators['ATR']:.2f}, ATR비율: {indicators['ATR비율']:.2f}%, MA200: ${indicators['MA200']:.2f}, 괴리율: {indicators['괴리율']:.2f}%, ADX: {indicators['ADX']:.2f}, +DI: {indicators['+DI']:.2f}, -DI: {indicators['-DI']:.2f})
+    """
     
-    <h4>➡️ 지표 상세 분석</h4>
-    <ul>
-        <li><b>ADX</b>: {adx:.2f}<br>
-            - 설명: 추세의 강도를 나타내며, 25 이상이면 강한 추세로 판단합니다.<br>
-            - 현재 판단: {adx_judgment}</li>
-        <li><b>+DI/-DI</b>: +DI({plus_di:.2f}), -DI({minus_di:.2f})<br>
-            - 설명: +DI는 상승, -DI는 하락 추세의 강도입니다.<br>
-            - 현재 판단: {di_judgment}</li>
-        <li><b>거래량 비율</b>: {volume_ratio:.2f}배<br>
-            - 설명: 평소 대비 거래량으로 시장의 관심을 나타냅니다.<br>
-            - 현재 판단: {volume_judgment}</li>
-    </ul>
-"""
-    if quantity is not None:
-        report_html += f"<h4>➡️ 매수 가능 수량: {quantity:,}주</h4>"
+    if action == 'BUY':
+        report_html += f"""
+        <br>
+        → <b>매수 가능 수량: {indicators['매수가능수량']:,}주</b>
+        <br>
+        → 목표가: ${indicators['목표가_usd']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}
+        <br>
+        """
+    elif action == 'PYRAMID_BUY':
+        report_html += f"""
+        <br>
+        → <b>추가 매수 가능 수량: {indicators['매수가능수량']:,}주</b> (현재 {s['units']} 유닛 보유)
+        <br>
+        → 추가 매수 가격: ${indicators['추가매수가_usd']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}
+        <br>
+        """
+    elif action == 'SELL':
+        report_html += f"""
+        <br>
+        → <b>현재 보유 수량: {s['units']}주</b>
+        <br>
+        → 매도 가격: ${indicators['종가']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}
+        <br>
+        """
+    elif action == '보유':
+        report_html += f"""
+        <br>
+        → <b>현재 보유 수량: {s['units']}주</b> (추세 유지 중)
+        <br>
+        → 손절가: ${indicators['손절가_usd']:.2f}
+        <br>
+        """
     
-    report_html += "</div>"
+    report_html += "</li>"
     return report_html
 
 
-# --- 메인 실행 로직 ---
+# ================ 메인 실행 ==================
 if __name__ == '__main__':
     print("🚀 터틀 트레이딩 리포트 시작...")
     REPORT_TYPE = os.getenv("REPORT_TYPE", "morning_plan")
@@ -509,12 +482,6 @@ if __name__ == '__main__':
                         'units': units, 'sector': sector, 'atr': ind['ATR'], 'atr_ratio': ind['ATR비율'],
                         'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14']
                     })
-                elif signal == "보유":
-                     pyramid_signals.append({
-                         'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'pyramid_price_krw': ind.get('추가매수가', None),
-                         'units': units, 'sector': sector, 'atr': ind['ATR'], 'atr_ratio': ind['ATR비율'],
-                         'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14']
-                     })
             
             if signal == "BUY" and is_a_plus_plus(ind, price_data, sector) and not is_holding:
                 a_plus_plus_list.append({
@@ -708,35 +675,45 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     """
     report_body += market_condition_html
 
-    # 수정된 리포트 출력 부분
-    report_body += "<h2>🚀 현재 포트폴리오 신호</h2>"
-    if not pyramid_signals and not sell_signals:
-        report_body += "<p>현재 보유 종목에 대한 신호가 없습니다.</p>"
-    else:
-        for s in pyramid_signals:
-            if s.get('pyramid_price_krw', None):
-                report_body += generate_detailed_stock_report(
-                    s['ticker'], 'PYRAMID_BUY', s['close'], 0, s['atr_ratio'], s['pyramid_price_krw'], s['stop_price_krw'], s['atr'], s['sector'], '은행', s['ma200'], s['괴리율'], s['adx'], s['+di'], s['-di']
-                )
-            else:
-                 # '보유' 신호일 경우
-                report_body += generate_detailed_stock_report(
-                    s['ticker'], '보유', s['close'], 0, s['atr_ratio'], s['stop_price_krw'], s['stop_price_krw'], s['atr'], s['sector'], '은행', s['ma200'], s['괴리율'], s['adx'], s['+di'], s['-di']
-                )
-
-        for s in sell_signals:
-            report_body += generate_detailed_stock_report(
-                s['ticker'], 'SELL', s['close'], 0, s['atr_ratio'], s['stop_price_krw'], s['stop_price_krw'], s['atr'], s['sector'], '은행', s['ma200'], s['괴리율'], s['adx'], s['+di'], s['-di']
-            )
-
-    report_body += "<hr><br/>"
-    
+    if pyramid_signals or sell_signals:
+        report_body += "<h2>🚀 현재 포트폴리오 신호</h2>"
+        if pyramid_signals:
+            report_body += "<h3>🟢 Pyramiding (추가 매수) 신호</h3><ul>"
+            for s in pyramid_signals:
+                report_body += f"""
+                <li><b>{s['ticker']}</b> ({s['sector']}): 현재 보유 수량 {s['units']}주. 추가 매수 조건 충족
+                <br>
+                → 현재가: ${s['close']:.2f}, 추가 매수 가격: ${s['pyramid_price_usd']:.2f}
+                <br>
+                → 목표가: ${s['target']:.2f}, 손절가: ${s['stop']:.2f}
+                </li>
+                """
+            report_body += "</ul>"
+        if sell_signals:
+            report_body += "<h3>🔴 SELL (청산) 신호</h3><ul>"
+            for s in sell_signals:
+                report_body += f"""
+                <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 손절/익절 조건 충족
+                <br>
+                → 현재가: ${s['close']:.2f}, 손절가: ${s['stop']:.2f}
+                </li>
+                """
+            report_body += "</ul>"
+        report_body += "<hr><br/>"
+        
     if a_plus_plus_list:
-        report_body += "<h2>🌟 나만의 A++ 추천 종목 (고성과 + 안정성)</h2>"
+        report_body += "<h2>🌟 나만의 A++ 추천 종목 (고성과 + 안정성)</h2><ul>"
         for s in a_plus_plus_list:
-            report_body += generate_detailed_stock_report(
-                s['ticker'], 'BUY', s['close'], s['volume_krw'], s['atr_ratio'], s['target_krw'], s['stop_krw'], s['atr'], s['sector'], s['industry'], s['ma200'], s['괴리율'], s['adx'], s['+di'], s['-di'], s['volume_ratio'], quantity=s['quantity']
-            )
+            report_body += f"""
+            <li><b>{s['ticker']}</b> ({s['sector']}): A++ 종목 (종가 ${s['close']:.2f},
+            ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+            <br>
+            → <b>매수 가능 수량: {s['quantity']:,}주</b>
+            <br>
+            → 목표가: ${s['target']:.2f}, 손절가: ${s['stop']:.2f}
+            </li>
+            """
+        report_body += "</ul><hr><br/>"
     else:
         report_body += "<h2>🌟 나만의 A++ 추천 종목</h2><p>현재 기준에 맞는 A++ 종목이 없습니다.</p><hr><br/>"
         
