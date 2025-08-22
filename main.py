@@ -317,7 +317,7 @@ if __name__ == '__main__':
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    EXCHANGE_RATE_KRW_USD = 1389.40
+    EXCHANGE_RATE_KRW_USD = 1389.75
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if forex_data is not None and not forex_data.empty:
@@ -328,7 +328,7 @@ if __name__ == '__main__':
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 15.09
+    vix_value = 14.49
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if vix_data is not None and not vix_data.empty and not vix_data['Close'].dropna().empty:
@@ -429,13 +429,21 @@ if __name__ == '__main__':
             if is_holding:
                 if signal == "PYRAMID_BUY":
                     pyramid_signals.append({
-                        'ticker': ticker, 'close_krw': ind['종가_krw'], 'pyramid_price_krw': ind['추가매수가'],
-                        'units': units, 'sector': sector
+                        'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'pyramid_price_krw': ind['추가매수가'],
+                        'units': units, 'sector': sector, 'atr': ind['ATR'], 'atr_ratio': ind['ATR비율'],
+                        'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['-DI']
                     })
                 elif signal == "SELL":
                     sell_signals.append({
-                        'ticker': ticker, 'close_krw': ind['종가_krw'], 'stop_price_krw': ind['손절가'],
-                        'units': units, 'sector': sector
+                        'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'stop_price_krw': ind['손절가'],
+                        'units': units, 'sector': sector, 'atr': ind['ATR'], 'atr_ratio': ind['ATR비율'],
+                        'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['-DI']
+                    })
+                elif signal == "보유":
+                     pyramid_signals.append({
+                        'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'pyramid_price_krw': ind['추가매수가'],
+                        'units': units, 'sector': sector, 'atr': ind['ATR'], 'atr_ratio': ind['ATR비율'],
+                        'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['-DI']
                     })
             
             if signal == "BUY" and is_a_plus_plus(ind, price_data, sector) and not is_holding:
@@ -445,7 +453,8 @@ if __name__ == '__main__':
                     'target': ind['목표가_usd'], 'stop': ind['손절가_usd'],
                     'target_krw': ind['목표가'], 'stop_krw': ind['손절가'],
                     'quantity': ind['매수가능수량'], 'volume_ratio': ind['거래량비율'], 'RSI': ind['RSI'],
-                    'sector': sector
+                    'sector': sector,
+                    'atr': ind['ATR'], 'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['-DI']
                 })
                 sector_counts[sector] = sector_counts.get(sector, 0) + 1
         except Exception as e:
@@ -470,7 +479,7 @@ if __name__ == '__main__':
         subtitle = "장 시작 직전, <b>프리마켓 실시간 데이터</b>를 반영한 <b>최종 결정용 리포트</b>입니다."
         timing_note = "📌 이 리포트는 프리마켓 가격을 반영했습니다. 매수 주문을 위한 최종 확인이 필요합니다."
     
-    subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {forward_pe:.1f})"
+    subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {FORWARD_PER:.1f})"
 
     report_body = f"""
     <h1>{title}</h1>
@@ -635,7 +644,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
             report_body += "<h3>🟢 Pyramiding (추가 매수) 신호</h3><ul>"
             for s in pyramid_signals:
                 report_body += f"""
-                <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 추가 매수 조건 충족
+                <li><b>{s['ticker']}</b> ({s['sector']}): 현재 보유 수량 {s['units']}주. 추가 매수 조건 충족
                 (현재가 {format_krw(s['close_krw'])}, 추가 매수 가격 {format_krw(s['pyramid_price_krw'])})</li>
                 """
             report_body += "</ul>"
@@ -654,8 +663,8 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         for s in a_plus_plus_list:
             report_body += f"""
             <li><b>{s['ticker']}</b> ({s['sector']}): A++ 종목 (종가 ${s['close']:.2f} ({format_krw(s['close_krw'])}),
-            거래량 {format_krw(s['volume_krw'])}, 거래량비율 {s['volume_ratio']:.1f}x, ATR비율 {s['atr_ratio']:.2f}%,
-            RSI {s['RSI']:.2f},
+            ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f}
+            <br>
             목표가 ${s['target']:.2f} ({format_krw(s['target_krw'])}), 손절가 ${s['stop']:.2f} ({format_krw(s['stop_krw'])}))
             → <b>매수 가능 수량: {s['quantity']:,}주</b></li>
             """
