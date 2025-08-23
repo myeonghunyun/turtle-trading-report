@@ -201,6 +201,36 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
         print(f"❌ 분석 중 오류: {e}")
         return "오류", {}
 
+def send_email(subject, body):
+    """리포트를 이메일로 전송합니다."""
+    sender_email = os.getenv("SENDER_EMAIL")
+    sender_password = os.getenv("GMAIL_APP_PASSWORD")
+    
+    receiver_emails_str = os.getenv("RECEIVER_EMAIL")
+    if not receiver_emails_str:
+        print("❌ 이메일 설정이 누락되었습니다. Secrets를 확인하세요.")
+        return
+        
+    receiver_emails = [email.strip() for email in receiver_emails_str.split(',')]
+
+    if not all([sender_email, sender_password]):
+        print("❌ 이메일 설정이 누락되었습니다. Secrets를 확인하세요.")
+        return
+
+    body_clean = body.replace('\xa0', ' ').replace('\u00A0', ' ')
+    msg = MIMEText(body_clean, 'html', _charset='utf-8')
+    msg['Subject'] = subject
+    msg['From'] = sender_email
+    msg['To'] = receiver_emails_str
+
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, receiver_emails, msg.as_string())
+        print("✅ 이메일이 성공적으로 전송되었습니다.")
+    except Exception as e:
+        print(f"❌ 이메일 전송 실패: {e}")
+
 def get_ticker_sector_industry(ticker):
     """yfinance를 통해 티커의 섹터와 산업 정보를 가져옵니다."""
     try:
@@ -277,25 +307,25 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
         return total_return, max_drawdown
     return None, None
 
-def generate_detailed_stock_report_html(s, action):
+def generate_detailed_stock_report_html(s, action, indicators):
     """
     주식 매매 리포트의 HTML 항목을 생성하는 함수
     """
     target_stop_html = ""
     if action == 'BUY':
-        target_stop_html = f"→ <b>매수 가능 수량</b>: {s['quantity']:,}주<br>→ 목표가: ${s['target']:.2f}, 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>매수 가능 수량</b>: {indicators['매수가능수량']:,}주<br>→ 목표가: ${indicators['목표가_usd']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == 'PYRAMID_BUY':
-        target_stop_html = f"→ <b>추가 매수 가격</b>: ${s['pyramid_price_usd']:.2f} (현재 {s['units']} 유닛 보유)<br>→ 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>추가 매수 가격</b>: ${indicators['추가매수가_usd']:.2f} (현재 {s['units']} 유닛 보유)<br>→ 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == 'SELL':
-        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주<br>→ 매도 가격: ${s['close']:.2f}, 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주<br>→ 매도 가격: ${indicators['종가']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == '보유':
-        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주 (추세 유지 중)<br>→ 손절가: ${s['stop']:.2f}"
+        target_stop_html = f"→ <b>현재 보유 수량</b>: {s['units']}주 (추세 유지 중)<br>→ 손절가: ${indicators['손절가_usd']:.2f}"
 
     return f"""
     <li>
         <b>{s['ticker']}</b> ({s['sector']}): {action}
         <br>
-        (종가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+        (종가 ${indicators['종가']:.2f}, ATR: ${indicators['ATR']:.2f}, ATR비율: {indicators['ATR비율']:.2f}%, MA200: ${indicators['MA200']:.2f}, 괴리율: {indicators['괴리율']:.2f}%, ADX: {indicators['ADX']:.2f}, +DI: {indicators['+DI']:.2f}, -DI: {indicators['-DI']:.2f})
         <br>
         {target_stop_html}
     </li>
@@ -311,7 +341,7 @@ if __name__ == '__main__':
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    EXCHANGE_RATE_KRW_USD = 1394.00
+    EXCHANGE_RATE_KRW_USD = 1391.18
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if forex_data is not None and not forex_data.empty:
@@ -322,7 +352,7 @@ if __name__ == '__main__':
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 15.09
+    vix_value = 14.99
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if vix_data is not None and not vix_data.empty and not vix_data['Close'].dropna().empty:
