@@ -67,9 +67,8 @@ def get_index_tickers(index_name):
         return []
 
     try:
-        # User-Agent 헤더를 추가하여 봇이 아닌 것처럼 보이게 합니다.
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
-        html_content = curl_requests.get(url, headers=headers).text
+        # User-Agent 헤더를 추가하여 봇으로 인식되는 것을 방지
+        html_content = curl_requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}).text
         tables = pd.read_html(io.StringIO(html_content))
         for table in tables:
             for col in possible_cols:
@@ -343,29 +342,18 @@ if __name__ == '__main__':
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    # 환율 데이터를 가져올 때, 실패에 대비하여 여러 번 재시도합니다.
-    retries = 3
-    for attempt in range(retries):
-        try:
-            forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
-            if forex_data is not None and not forex_data.empty:
-                EXCHANGE_RATE_KRW_USD = float(forex_data['Close'].iloc[0])
-                print(f"✅ 환율 가져오기 성공: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
-                break
-            else:
-                print(f"⚠️ 환율 데이터가 비어 있습니다. {attempt + 1}/{retries}회 재시도 중...")
-                if attempt == retries - 1:
-                    print("⚠️ 환율 가져오기 실패: 기본값 사용")
-                    EXCHANGE_RATE_KRW_USD = 1395.00
-                time.sleep(5)
-        except Exception as e:
-            print(f"⚠️ 환율 가져오기 실패: {e}. {attempt + 1}/{retries}회 재시도 중...")
-            if attempt == retries - 1:
-                print("⚠️ 환율 가져오기 실패: 기본값 사용")
-                EXCHANGE_RATE_KRW_USD = 1395.00
-            time.sleep(5)
+    EXCHANGE_RATE_KRW_USD = 1391.18
+    try:
+        forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
+        if forex_data is not None and not forex_data.empty:
+            EXCHANGE_RATE_KRW_USD = float(forex_data['Close'].iloc[0])
+        else:
+            print("⚠️ 환율 데이터가 비어 있습니다. 기본값 사용")
+    except Exception as e:
+        print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
+    print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 15.69
+    vix_value = 14.99
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if vix_data is not None and not vix_data.empty and not vix_data['Close'].dropna().empty:
@@ -591,10 +579,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         print(f"⚠️ S&P 500 데이터 가져오기 실패: {e}")
         disparity_sp500 = 0
 
-    atr_ratios = []
-    # a_plus_plus_list가 비어있을 경우를 대비
-    if a_plus_plus_list:
-        atr_ratios = [s['atr_ratio'] for s in a_plus_plus_list if 'atr_ratio' in s]
+    atr_ratios = [s['atr_ratio'] for s in a_plus_plus_list if 'atr_ratio' in s]
     avg_atr_ratio = sum(atr_ratios) / len(atr_ratios) if atr_ratios else 0
     
     market_condition_html = f"""
