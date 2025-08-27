@@ -67,7 +67,6 @@ def get_index_tickers(index_name):
         return []
 
     try:
-        # User-Agent 헤더를 추가하여 봇으로 인식되는 것을 방지
         html_content = curl_requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}).text
         tables = pd.read_html(io.StringIO(html_content))
         for table in tables:
