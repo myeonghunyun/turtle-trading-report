@@ -661,19 +661,38 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         if pyramid_signals:
             report_body += "<h3>🟢 Pyramiding (추가 매수) 신호</h3><ul>"
             for s in pyramid_signals:
-                report_body += generate_detailed_stock_report_html(s, 'PYRAMID_BUY')
+                report_body += f"""
+                <li><b>{s['ticker']}</b> ({s['sector']}): 현재 보유 수량 {s['units']}주. 추가 매수 조건 충족
+                (현재가 ${s['close']:.2f}, ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+                <br>
+                → 추가 매수 가격: ${s['pyramid_price_usd']:.2f}, 손절가: ${s['stop']:.2f}
+                </li>
+                """
             report_body += "</ul>"
         if sell_signals:
             report_body += "<h3>🔴 SELL (청산) 신호</h3><ul>"
             for s in sell_signals:
-                report_body += generate_detailed_stock_report_html(s, 'SELL')
+                report_body += f"""
+                <li><b>{s['ticker']}</b> ({s['sector']}) : 현재 보유 수량 {s['units']}주. 손절/익절 조건 충족
+                <br>
+                → 현재가: ${s['close']:.2f}, 손절가: ${s['stop']:.2f}
+                </li>
+                """
             report_body += "</ul>"
         report_body += "<hr><br/>"
         
     if a_plus_plus_list:
         report_body += "<h2>🌟 나만의 A++ 추천 종목 (고성과 + 안정성)</h2><ul>"
         for s in a_plus_plus_list:
-            report_body += generate_detailed_stock_report_html(s, 'BUY')
+            report_body += f"""
+            <li><b>{s['ticker']}</b> ({s['sector']}): A++ 종목 (종가 ${s['close']:.2f},
+            ATR: ${s['atr']:.2f}, ATR비율: {s['atr_ratio']:.2f}%, MA200: ${s['ma200']:.2f}, 괴리율: {s['괴리율']:.2f}%, ADX: {s['adx']:.2f}, +DI: {s['+di']:.2f}, -DI: {s['-di']:.2f})
+            <br>
+            → <b>매수 가능 수량: {s['quantity']:,}주</b>
+            <br>
+            → 목표가: ${s['target']:.2f}, 손절가: ${s['stop']:.2f}
+            </li>
+            """
         report_body += "</ul><hr><br/>"
     else:
         report_body += "<h2>🌟 나만의 A++ 추천 종목</h2><p>현재 기준에 맞는 A++ 종목이 없습니다.</p><hr><br/>"
