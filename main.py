@@ -377,7 +377,7 @@ if __name__ == '__main__':
             forward_pe = sp500_info['forwardPE']
             print(f"✅ S&P 500 전망 PER: {forward_pe:.1f}")
         else:
-            print("⚠️ S&P 500 전망 PER 데이터 없음. 기본값 사용")
+            print("⚠️ S&P 500 전망 PER 없음. 기본값 사용")
     except Exception as e:
         print(f"⚠️ S&P 500 전망 PER 가져오기 실패: {e}, 기본값 사용")
         
