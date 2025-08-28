@@ -356,10 +356,10 @@ if __name__ == '__main__':
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    EXCHANGE_RATE_KRW_USD = 1393.62
+    EXCHANGE_RATE_KRW_USD = 1395.28
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
-        if forex_data is not None and not forex_data.empty:
+        if isinstance(forex_data, pd.DataFrame) and not forex_data.empty and 'Close' in forex_data.columns:
             EXCHANGE_RATE_KRW_USD = float(forex_data['Close'].iloc[0])
         else:
             print("⚠️ 환율 데이터가 비어 있습니다. 기본값 사용")
@@ -367,10 +367,10 @@ if __name__ == '__main__':
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 16.60
+    vix_value = 15.69
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
-        if vix_data is not None and not vix_data.empty and not vix_data['Close'].dropna().empty:
+        if isinstance(vix_data, pd.DataFrame) and not vix_data.empty and 'Close' in vix_data.columns:
             vix_value = float(vix_data['Close'].dropna().iloc[0])
         else:
             print("⚠️ VIX 데이터가 비어 있습니다. 기본값 사용")
@@ -521,7 +521,7 @@ if __name__ == '__main__':
         subtitle = "장 시작 직전, <b>프리마켓 실시간 데이터</b>를 반영한 <b>최종 결정용 리포트</b>입니다."
         timing_note = "📌 이 리포트는 프리마켓 가격을 반영했습니다. 매수 주문을 위한 최종 확인이 필요합니다."
     
-    subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {forward_pe:.1f})"
+    subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {FORWARD_PER:.1f})"
 
     report_body = f"""
     <h1>{title}</h1>
