@@ -99,11 +99,17 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
             return "데이터 부족", {}
 
         ticker_data['ATR'] = ta.atr(ticker_data['High'], ticker_data['Low'], ticker_data['Close'], length=20)
+        
         adx_series = ta.adx(ticker_data['High'], ticker_data['Low'], ticker_data['Close'], length=14)
-        if adx_series is not None and not adx_series.empty:
+        if adx_series is not None and not adx_series.empty and all(col in adx_series.columns for col in ['ADX_14', 'DMP_14', 'DMN_14']):
             ticker_data['ADX'] = adx_series['ADX_14']
             ticker_data['+DI'] = adx_series['DMP_14']
             ticker_data['DMN_14'] = adx_series['DMN_14']
+        else:
+            ticker_data['ADX'] = np.nan
+            ticker_data['+DI'] = np.nan
+            ticker_data['DMN_14'] = np.nan
+            
         ticker_data['MA200'] = ta.sma(ticker_data['Close'], length=200)
         ticker_data['RSI'] = ta.rsi(ticker_data['Close'], length=14)
         ticker_data['VMA20'] = ta.sma(ticker_data['Volume'], length=20)
@@ -346,7 +352,7 @@ def generate_detailed_stock_report_html(s, action, indicators):
     <li>
         <b>{s['ticker']}</b> ({s['sector']}): {action}
         <br>
-        (종가 ${indicators['종가']:.2f}, ATR: ${indicators['ATR']:.2f}, ATR비율: {indicators['ATR비율']:.2f}%, MA200: ${indicators['MA200']:.2f}, 괴리율: {indicators['괴리율']:.2f}%, ADX: {indicators['ADX']:.2f}, +DI: {indicators['+DI']:.2f}, -DI: {indicators['-DI']:.2f})
+        (종가 ${indicators['종가']:.2f}, ATR: ${indicators['ATR']:.2f}, ATR비율: {indicators['ATR비율']:.2f}%, MA200: ${indicators['MA200']:.2f}, 괴리율: {indicators['괴리율']:.2f}%, ADX: {indicators['ADX']:.2f}, +DI: {indicators['+DI']:.2f}, -DI: {indicators['DMN_14']:.2f})
         <br>
         {target_stop_html}
     </li>
@@ -597,13 +603,14 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     disparity_sp500 = 0
     try:
         sp500_data = yf.download('^GSPC', period="250d", auto_adjust=True, session=session, progress=False)
-        if not sp500_data.empty and len(sp500_data) >= 200:
+        # S&P 500 데이터 로딩 오류 해결을 위한 개선된 로직
+        if isinstance(sp500_data, pd.DataFrame) and not sp500_data.empty and len(sp500_data) >= 200 and 'Close' in sp500_data.columns:
             sp500_close = sp500_data['Close'].iloc[-1]
             sp500_ma200 = sp500_data['Close'].rolling(200).mean().iloc[-1]
             if pd.notna(sp500_ma200) and sp500_ma200 > 0:
                 disparity_sp500 = (sp500_close / sp500_ma200 - 1) * 100
         else:
-            print("⚠️ S&P 500 데이터 부족 또는 비어 있음.")
+            print("⚠️ S&P 500 데이터가 유효하지 않거나 부족합니다. 괴리율 계산을 건너뜁니다.")
     except Exception as e:
         print(f"⚠️ S&P 500 데이터 가져오기 실패: {e}")
         disparity_sp500 = 0
