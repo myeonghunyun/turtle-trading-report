@@ -341,7 +341,7 @@ if __name__ == '__main__':
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    EXCHANGE_RATE_KRW_USD = 1391.18
+    EXCHANGE_RATE_KRW_USD = 1393.62
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if forex_data is not None and not forex_data.empty:
@@ -352,7 +352,7 @@ if __name__ == '__main__':
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 14.99
+    vix_value = 16.60
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if vix_data is not None and not vix_data.empty and not vix_data['Close'].dropna().empty:
@@ -377,7 +377,7 @@ if __name__ == '__main__':
             forward_pe = sp500_info['forwardPE']
             print(f"✅ S&P 500 전망 PER: {forward_pe:.1f}")
         else:
-            print("⚠️ S&P 500 전망 PER 없음. 기본값 사용")
+            print("⚠️ S&P 500 전망 PER 데이터 없음. 기본값 사용")
     except Exception as e:
         print(f"⚠️ S&P 500 전망 PER 가져오기 실패: {e}, 기본값 사용")
         
