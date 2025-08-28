@@ -304,18 +304,11 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
             signals.loc[signals.index[i], 'Strategy'] = signals.loc[signals.index[i-1], 'Strategy'] * (1 + return_rate)
         else:
             signals.loc[signals.index[i], 'Strategy'] = signals.loc[signals.index[i-1], 'Strategy']
-    
-    # 200일선 이후부터 수익률 계산
-    start_index = signals['MA200'].first_valid_index()
-    if start_index is None:
-        return None, None
+
+    if not signals['Strategy'].empty:
+        total_return = (signals['Strategy'].iloc[-1] - 1) * 100
         
-    signals_subset = signals.loc[start_index:]
-    
-    if not signals_subset['Strategy'].empty:
-        total_return = (signals_subset['Strategy'].iloc[-1] - 1) * 100
-        
-        cumulative_returns = signals_subset['Strategy']
+        cumulative_returns = signals['Strategy']
         peak = cumulative_returns.expanding(min_periods=1).max()
         drawdown = (cumulative_returns - peak) / peak
         max_drawdown = drawdown.min() * 100 if not drawdown.empty else 0
@@ -356,7 +349,7 @@ if __name__ == '__main__':
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    EXCHANGE_RATE_KRW_USD = 1395.28
+    EXCHANGE_RATE_KRW_USD = 1395.40
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if isinstance(forex_data, pd.DataFrame) and not forex_data.empty and 'Close' in forex_data.columns:
@@ -367,7 +360,7 @@ if __name__ == '__main__':
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 15.69
+    vix_value = 16.60
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if isinstance(vix_data, pd.DataFrame) and not vix_data.empty and 'Close' in vix_data.columns:
@@ -521,7 +514,7 @@ if __name__ == '__main__':
         subtitle = "장 시작 직전, <b>프리마켓 실시간 데이터</b>를 반영한 <b>최종 결정용 리포트</b>입니다."
         timing_note = "📌 이 리포트는 프리마켓 가격을 반영했습니다. 매수 주문을 위한 최종 확인이 필요합니다."
     
-    subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {FORWARD_PER:.1f})"
+    subject = f"{title.split('[')[0].strip()} (VIX: {vix_value:.1f}, PER: {forward_pe:.1f})"
 
     report_body = f"""
     <h1>{title}</h1>
@@ -713,7 +706,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     if backtest_results:
         report_body += "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2>"
         report_body += """<p>※ 백테스팅 결과는 과거 성과이며, 미래 수익률을 보장하지 않습니다.<br>
-            <b>최대 낙폭(MDD)</b>: 전략이 실행된 기간 동안 고점에서 저점까지의 최대 손실률입니다. 전략의 리스크를 파악하는 중요한 지표입니다.</p>"""
+            <b>최대 낙폭(MDD)</b>: 전략이 실행된 기간 동안 고점에서 저점까지의 최대 손실률입니다. 전략의 리스크를 파악하는 중요한 지표입니다。</p>"""
         report_body += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; font-size: 14px;'>"
         report_body += "<tr><th>종목</th><th>수익률</th><th>최대 낙폭(MDD)</th></tr>"
         
