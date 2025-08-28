@@ -114,7 +114,9 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
         ticker_data['RSI'] = ta.rsi(ticker_data['Close'], length=14)
         ticker_data['VMA20'] = ta.sma(ticker_data['Volume'], length=20)
         
-        if ticker_data.iloc[-1].isnull().any() or ticker_data.iloc[-1]['ATR'] is None:
+        # 지표 계산에 필요한 데이터가 모두 있는지 최종 확인
+        required_cols = ['Close', 'High', 'Low', 'Volume', 'ATR', 'ADX', 'MA200', 'RSI', 'VMA20']
+        if not all(col in ticker_data.columns for col in required_cols) or ticker_data.iloc[-1].isnull().any():
             return "분석 오류", {}
 
         last_row = ticker_data.iloc[-1]
@@ -127,7 +129,7 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
         last_ma200 = last_row['MA200'] if pd.notna(last_row['MA200']) else 0
         last_rsi = last_row['RSI'] if pd.notna(last_row['RSI']) else 0
         
-        # 20일 신고가 계산
+        # 20일 신고가 계산 (어제까지)
         last_20_high_prev = ticker_data['High'].iloc[:-1].rolling(20).max().iloc[-1] if len(ticker_data) >= 21 else last_close
         
         last_10_low = ticker_data['Low'].rolling(10).min().iloc[-1] if len(ticker_data) >= 10 else last_close
@@ -151,62 +153,48 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
         stop_price = last_close - (2 * last_atr)
         target_price = last_close + (2 * last_atr)
 
+        indicators = {
+            "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
+            "손절가": round(stop_price * exchange_rate, 0), "손절가_usd": stop_price,
+            "매수포함": False, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
+            "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "ATR비율": atr_ratio,
+            "volume_krw_billion": (last_volume * last_close * exchange_rate) / 1e8, "거래량비율": volume_ratio
+        }
+
         if units > 0 and last_buy_price is not None:
             stop_price_portfolio = last_buy_price - (2 * last_atr)
             pyramid_price = last_buy_price + (0.5 * last_atr)
             
             if last_close < stop_price_portfolio or last_close < last_10_low:
-                return "SELL", {
-                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
-                    "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
-                    "매수포함": True, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
-                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "ATR비율": atr_ratio,
-                    "volume_krw_billion": (last_volume * last_close * exchange_rate) / 1e8, "거래량비율": volume_ratio
-                }
+                signal = "SELL"
             elif last_close > pyramid_price and units < MAX_UNITS:
-                return "PYRAMID_BUY", {
-                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
-                    "추가매수가": round(pyramid_price * exchange_rate, 0), "추가매수가_usd": pyramid_price,
-                    "매수포함": True, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
-                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "ATR비율": atr_ratio,
-                    "volume_krw_billion": (last_volume * last_close * exchange_rate) / 1e8, "거래량비율": volume_ratio
-                }
+                signal = "PYRAMID_BUY"
             else:
-                return "보유", {
-                    "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "ATR": last_atr,
-                    "손절가": round(stop_price_portfolio * exchange_rate, 0), "손절가_usd": stop_price_portfolio,
-                    "매수포함": True, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
-                    "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "ATR비율": atr_ratio,
-                    "volume_krw_billion": (last_volume * last_close * exchange_rate) / 1e8, "거래량비율": volume_ratio
-                }
+                signal = "보유"
 
-        is_above_ma200 = last_close > last_ma200
-        initial_buy_condition = (
-            last_close > last_20_high_prev and
-            is_above_ma200 and
-            vix_value < 30 and
-            last_adx > dynamic_adx_threshold and
-            volume_ratio > VOLUME_THRESHOLD and
-            volume_above_vma and
-            atr_above_avg and
-            last_rsi < 70 and
-            atr_ratio <= dynamic_atr_upper_limit
-        )
+            indicators.update({
+                "손절가_usd": stop_price_portfolio, "추가매수가_usd": pyramid_price,
+                "units": units
+            })
+            
+        else: # 신규 매수 신호 계산
+            is_above_ma200 = last_close > last_ma200
+            initial_buy_condition = (
+                last_close > last_20_high_prev and
+                is_above_ma200 and
+                vix_value < 30 and
+                last_adx > dynamic_adx_threshold and
+                volume_ratio > VOLUME_THRESHOLD and
+                volume_above_vma and
+                atr_above_avg and
+                last_rsi < 70 and
+                atr_ratio <= dynamic_atr_upper_limit
+            )
 
-        if initial_buy_condition and units == 0:
-            signal = "BUY"
-        elif not is_above_ma200 or last_adx < dynamic_adx_threshold or last_close < last_10_low:
-            signal = "SELL"
-        else:
-            signal = "보유"
-
-        indicators = {
-            "종가": last_close, "종가_krw": round(last_close * exchange_rate, 0), "거래량_krw_billion": (last_volume * last_close * exchange_rate) / 1e8,
-            "ATR": last_atr, "ATR비율": atr_ratio, "MA200": last_ma200, "괴리율": disparity_rate,
-            "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di, "거래량비율": volume_ratio,
-            "손절가": round(stop_price * exchange_rate, 0), "목표가": round(target_price * exchange_rate, 0), "매수가능수량": buy_quantity, "RSI": last_rsi,
-            "손절가_usd": stop_price, "목표가_usd": target_price, "매수포함": False
-        }
+            if initial_buy_condition:
+                signal = "BUY"
+            else:
+                signal = "보유"
 
         return signal, indicators
 
@@ -368,7 +356,7 @@ if __name__ == '__main__':
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    EXCHANGE_RATE_KRW_USD = 1395.40
+    EXCHANGE_RATE_KRW_USD = 1393.62
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if forex_data is not None and not forex_data.empty:
@@ -379,7 +367,7 @@ if __name__ == '__main__':
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 15.69
+    vix_value = 16.60
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if vix_data is not None and not vix_data.empty and not vix_data['Close'].dropna().empty:
