@@ -59,46 +59,34 @@ SECTOR_LIMIT = SETTINGS['SECTOR_LIMIT']
 FORWARD_PER = SETTINGS['FORWARD_PER']
 MAX_UNITS = 4
 
-# --- 새로운 데이터 로딩 함수들 (FMP, Alpha Vantage) ---
-def get_stock_data_fmp(ticker):
-    """
-    Financial Modeling Prep API를 사용하여 주식 데이터를 가져옵니다.
-    """
-    api_key = os.getenv("FMP_API_KEY")
-    if not api_key:
-        print("❌ FMP_API_KEY가 설정되지 않았습니다. Secrets를 확인하세요.")
-        return pd.DataFrame()
-    
-    # 여러 번의 재시도 로직 추가
-    for attempt in range(3):
-        url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?apikey={api_key}"
-        try:
-            response = curl_requests.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            
-            if 'historical' not in data or not data['historical']:
-                print(f"⚠️ FMP에서 {ticker}의 데이터가 없습니다. 재시도({attempt+1}/3)")
-                time.sleep(5)
-                continue
-                
-            df = pd.DataFrame(data['historical'])
-            df['date'] = pd.to_datetime(df['date'])
-            df.set_index('date', inplace=True)
-            df.columns = df.columns.str.capitalize()
-            
-            # 1년치 데이터 필터링
-            one_year_ago = datetime.now() - pd.Timedelta(days=365)
-            df = df[df.index >= one_year_ago]
-            
-            return df
-        
-        except Exception as e:
-            print(f"❌ FMP API 호출 중 오류 발생: {e}. 재시도({attempt+1}/3)")
-            time.sleep(5)
-            continue
-            
-    return pd.DataFrame()
+def get_index_tickers(index_name):
+    """Wikipedia에서 S&P 500 또는 Nasdaq-100 티커 목록을 가져옵니다."""
+    if index_name == 'sp500':
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        possible_cols = ['Symbol', 'Ticker symbol', 'Ticker']
+    elif index_name == 'nasdaq100':
+        url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
+        possible_cols = ['Ticker', 'Ticker symbol', 'Company']
+    else:
+        print(f"❌ 지원하지 않는 인덱스: {index_name}")
+        return []
+
+    try:
+        html_content = curl_requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}).text
+        tables = pd.read_html(io.StringIO(html_content))
+        for table in tables:
+            for col in possible_cols:
+                if col in table.columns:
+                    tickers = table[col].dropna().astype(str).tolist()
+                    tickers = [t.strip() for t in tickers if isinstance(t, str) and 1 <= len(t) <= 10 and t != 'nan']
+                    tickers = [t.replace('.', '-') for t in tickers]
+                    print(f"✅ {index_name} 티커 {len(tickers)}개 로드 완료.")
+                    return tickers
+        print(f"❌ {index_name} 티커를 찾을 수 없습니다.")
+        return []
+    except Exception as e:
+        print(f"❌ {index_name} 티커 추출 실패: {e}")
+        return []
 
 def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
     """단일 종목에 대한 터틀 트레이딩 신호를 계산합니다."""
@@ -297,9 +285,9 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
             signals.loc[signals.index[i], 'RSI'] < 70
         )
         sell_condition = (
-            signals.loc[signals.index[i], 'Close'] < signals.loc[signals.index[i], 'MA200'] or
+            current_close < signals.loc[signals.index[i], 'MA200'] or
             signals.loc[signals.index[i], 'ADX'] < dynamic_adx_threshold or
-            signals.loc[signals.index[i], 'Close'] < signals.loc[signals.index[i], '10D_Low']
+            current_close < signals.loc[signals.index[i], '10D_Low']
         )
 
         position_was_open = signals.loc[signals.index[i-1], 'Position'] == 1
@@ -361,7 +349,7 @@ if __name__ == '__main__':
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    EXCHANGE_RATE_KRW_USD = 1391.16
+    EXCHANGE_RATE_KRW_USD = 1395.40
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if isinstance(forex_data, pd.DataFrame) and not forex_data.empty and 'Close' in forex_data.columns:
@@ -372,7 +360,7 @@ if __name__ == '__main__':
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 16.60
+    vix_value = 15.69
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if isinstance(vix_data, pd.DataFrame) and not vix_data.empty and 'Close' in vix_data.columns:
@@ -556,7 +544,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     report_body += """
     <h2>📌 실전 거래량 비율 판단 가이드</h2>
     <p><b>거래량비율</b>은 "오늘 거래량이 평소보다 몇 배 늘었는가?"를 보여줍니다.<br/>
-    이 수치는 시장의 관심과 변동성의 전조를 파악하는 핵심 지표입니다.</p>
+    이 수치는 시장의 관심과 변동성의 전조를 파악하는 핵심 지표입니다。</p>
 
     <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; font-size: 14px;">
         <tr style="background-color: #f2f2f2;">
