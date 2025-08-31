@@ -1,4 +1,6 @@
-requests
+yfinance
 pandas
 pandas-ta==0.3.14b0
 numpy==1.24.4
+lxml
+requests
