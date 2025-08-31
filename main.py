@@ -68,27 +68,6 @@ if not FMP_API_KEY:
     sys.exit(1)
 
 # ----------------- 데이터 수집 함수 (FMP API 기반) -----------------
-def get_index_tickers(index_name):
-    """FMP API를 통해 S&P 500 또는 Nasdaq-100 티커 목록을 가져옵니다."""
-    if index_name == 'sp500':
-        url = f"{FMP_BASE_URL}/sp500_constituent?apikey={FMP_API_KEY}"
-    elif index_name == 'nasdaq100':
-        url = f"{FMP_BASE_URL}/nasdaq_constituent?apikey={FMP_API_KEY}"
-    else:
-        print(f"❌ 지원하지 않는 인덱스: {index_name}")
-        return []
-
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        tickers = [item['symbol'] for item in data]
-        print(f"✅ {index_name} 티커 {len(tickers)}개 로드 완료.")
-        return tickers
-    except Exception as e:
-        print(f"❌ {index_name} 티커 로드 실패: {e}")
-        return []
-
 def get_historical_data(ticker, period="1y"):
     """FMP API에서 주식 과거 데이터를 가져옵니다."""
     try:
@@ -142,6 +121,17 @@ def get_ticker_sector_industry(ticker):
     except Exception as e:
         print(f"❌ {ticker} 섹터/산업 정보 가져오기 실패: {e}")
     return 'Unknown', 'Unknown'
+
+def get_tickers_from_file(file_path='tickers.txt'):
+    """로컬 파일에서 티커 목록을 가져옵니다."""
+    try:
+        with open(file_path, 'r') as f:
+            tickers = [line.strip().upper() for line in f if line.strip()]
+        print(f"✅ 로컬 파일에서 티커 {len(tickers)}개 로드 완료.")
+        return tickers
+    except FileNotFoundError:
+        print(f"❌ '{file_path}' 파일이 없습니다. 프로그램을 종료합니다.")
+        return []
 
 # ----------------- 터틀 신호 및 보조 지표 계산 함수 (기존 로직 유지) -----------------
 def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
@@ -212,7 +202,7 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
             "매수포함": False, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
             "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "ATR비율": atr_ratio,
             "volume_krw_billion": (last_volume * last_close * exchange_rate) / 1e8, "거래량비율": volume_ratio,
-            "매수가능수량": buy_quantity
+            "매수가능수량": buy_quantity, "목표가_usd": target_price
         }
 
         if units > 0 and last_buy_price is not None:
@@ -356,7 +346,7 @@ def generate_detailed_stock_report_html(s, action, indicators):
     """
     target_stop_html = ""
     if action == 'BUY':
-        target_stop_html = f"→ <b>매수 가능 수량</b>: {indicators['매수가능수량']:,}주<br>→ 목표가: ${indicators.get('target', 0):.2f}, 손절가: ${indicators.get('stop', 0):.2f}"
+        target_stop_html = f"→ <b>매수 가능 수량</b>: {indicators['매수가능수량']:,}주<br>→ 목표가: ${indicators.get('목표가_usd', 0):.2f}, 손절가: ${indicators.get('손절가_usd', 0):.2f}"
     elif action == 'PYRAMID_BUY':
         target_stop_html = f"→ <b>추가 매수 가격</b>: ${indicators['추가매수가_usd']:.2f} (현재 {s['units']} 유닛 보유)<br>→ 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == 'SELL':
@@ -413,9 +403,8 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"⚠️ S&P 500 전망 PER 가져오기 실패: {e}, 기본값 사용")
         
-    sp500_tickers = get_index_tickers('sp500')
-    nasdaq100_tickers = get_index_tickers('nasdaq100')
-    all_tickers = list(set(sp500_tickers + nasdaq100_tickers))
+    # FMP API 호출 대신 로컬 파일에서 티커 목록을 가져오도록 변경
+    all_tickers = get_tickers_from_file()
     
     if not all_tickers:
         print("❌ 티커 목록이 비어 있습니다. 프로그램을 종료합니다.")
@@ -504,9 +493,9 @@ if __name__ == '__main__':
                 a_plus_plus_list.append({
                     'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'],
                     'volume_krw': ind['volume_krw_billion'], 'ATR비율': ind['ATR비율'],
-                    'target': ind['목표가_usd'], 'stop': ind['손절가_usd'],
-                    'target_krw': ind['손절가'], 'stop_krw': ind['손절가'],
-                    'quantity': ind['매수가능수량'], '거래량비율': ind['거래량비율'], 'RSI': ind['RSI'],
+                    'target': ind.get('목표가_usd', 0), 'stop': ind.get('손절가_usd', 0),
+                    'target_krw': ind.get('목표가', 0), 'stop_krw': ind.get('손절가', 0),
+                    'quantity': ind.get('매수가능수량', 0), '거래량비율': ind['거래량비율'], 'RSI': ind['RSI'],
                     'sector': sector, 'industry': industry,
                     'atr': ind['ATR'], 'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14']
                 })
