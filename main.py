@@ -88,6 +88,40 @@ def get_index_tickers(index_name):
         print(f"❌ {index_name} 티커 추출 실패: {e}")
         return []
 
+def get_stock_data_fmp(ticker):
+    """
+    Financial Modeling Prep API를 사용하여 주식 데이터를 가져옵니다.
+    """
+    api_key = os.getenv("FMP_API_KEY")
+    if not api_key:
+        print("❌ FMP_API_KEY가 설정되지 않았습니다. Secrets를 확인하세요.")
+        return pd.DataFrame()
+
+    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?apikey={api_key}"
+    
+    try:
+        response = curl_requests.get(url)
+        data = response.json()
+        
+        if 'historical' not in data or not data['historical']:
+            print(f"⚠️ {ticker}의 데이터가 없습니다.")
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(data['historical'])
+        df['date'] = pd.to_datetime(df['date'])
+        df.set_index('date', inplace=True)
+        df.sort_index(ascending=True, inplace=True)
+        
+        # 1년치 데이터 필터링
+        one_year_ago = datetime.now() - pd.Timedelta(days=365)
+        df = df[df.index >= one_year_ago]
+        
+        return df
+    
+    except Exception as e:
+        print(f"❌ FMP API 호출 중 오류 발생: {e}")
+        return pd.DataFrame()
+
 def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
     """단일 종목에 대한 터틀 트레이딩 신호를 계산합니다."""
     try:
@@ -360,7 +394,7 @@ if __name__ == '__main__':
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 16.60
+    vix_value = 15.69
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if isinstance(vix_data, pd.DataFrame) and not vix_data.empty and 'Close' in vix_data.columns:
@@ -715,7 +749,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
         
         report_body += "</table>"
     else:
-        report_body += "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2><p>A++ 종목이 없거나 데이터 부족으로 백테스팅을 실행할 수 없습니다.</p>"
+        report_body += "<h2>📊 전략 백테스팅 결과 (지난 1년)</h2><p>A++ 종목이 없거나 데이터 부족으로 백테스팅을 실행할 수 없습니다。</p>"
     
     send_email(subject, report_body)
     print("✅ 리포트 생성 및 전송 완료!")
