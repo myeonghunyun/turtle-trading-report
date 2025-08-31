@@ -1,19 +1,19 @@
 # main.py
-import yfinance as yf
+import requests
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
 import pandas_ta as ta
 import os
-import time
-from curl_cffi import requests as curl_requests
 import sys
-import io
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
+import io
+import time
 
 # ----------------- 설정값을 외부 파일에서 불러오기 -----------------
 def read_settings(file_path='settings.txt'):
+    """settings.txt 파일에서 설정을 읽어와 딕셔너리로 반환합니다."""
     settings = {}
     if not os.path.exists(file_path):
         print(f"❌ 설정 파일 '{file_path}'이 없습니다. 프로그램을 종료합니다.")
@@ -30,7 +30,7 @@ def read_settings(file_path='settings.txt'):
             except ValueError:
                 print(f"⚠️ 설정 파일 '{file_path}'의 형식이 올바르지 않습니다: '{line}'")
                 continue
-            
+                
     try:
         return {
             'TOTAL_SEED_KRW': int(settings.get('TOTAL_SEED_KRW', 100000000)),
@@ -59,35 +59,91 @@ SECTOR_LIMIT = SETTINGS['SECTOR_LIMIT']
 FORWARD_PER = SETTINGS['FORWARD_PER']
 MAX_UNITS = 4
 
+# ----------------- FMP API 설정 -----------------
+FMP_API_KEY = os.getenv("FMP_API_KEY")
+FMP_BASE_URL = "https://financialmodelingprep.com/api/v3"
+
+if not FMP_API_KEY:
+    print("❌ FMP_API_KEY가 GitHub Secrets에 설정되지 않았습니다. 프로그램을 종료합니다.")
+    sys.exit(1)
+
+# ----------------- 데이터 수집 함수 (FMP API 기반) -----------------
 def get_index_tickers(index_name):
-    """Wikipedia에서 S&P 500 또는 Nasdaq-100 티커 목록을 가져옵니다."""
+    """FMP API를 통해 S&P 500 또는 Nasdaq-100 티커 목록을 가져옵니다."""
     if index_name == 'sp500':
-        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        possible_cols = ['Symbol', 'Ticker symbol', 'Ticker']
+        url = f"{FMP_BASE_URL}/sp500_constituent?apikey={FMP_API_KEY}"
     elif index_name == 'nasdaq100':
-        url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
-        possible_cols = ['Ticker', 'Ticker symbol', 'Company']
+        url = f"{FMP_BASE_URL}/nasdaq_constituent?apikey={FMP_API_KEY}"
     else:
         print(f"❌ 지원하지 않는 인덱스: {index_name}")
         return []
 
     try:
-        html_content = curl_requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}).text
-        tables = pd.read_html(io.StringIO(html_content))
-        for table in tables:
-            for col in possible_cols:
-                if col in table.columns:
-                    tickers = table[col].dropna().astype(str).tolist()
-                    tickers = [t.strip() for t in tickers if isinstance(t, str) and 1 <= len(t) <= 10 and t != 'nan']
-                    tickers = [t.replace('.', '-') for t in tickers]
-                    print(f"✅ {index_name} 티커 {len(tickers)}개 로드 완료.")
-                    return tickers
-        print(f"❌ {index_name} 티커를 찾을 수 없습니다.")
-        return []
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        tickers = [item['symbol'] for item in data]
+        print(f"✅ {index_name} 티커 {len(tickers)}개 로드 완료.")
+        return tickers
     except Exception as e:
-        print(f"❌ {index_name} 티커 추출 실패: {e}")
+        print(f"❌ {index_name} 티커 로드 실패: {e}")
         return []
 
+def get_historical_data(ticker, period="1y"):
+    """FMP API에서 주식 과거 데이터를 가져옵니다."""
+    try:
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=365 * 2) # 2년치 데이터 요청
+        
+        url = f"{FMP_BASE_URL}/historical-price-full/{ticker}?from={start_date.strftime('%Y-%m-%d')}&to={end_date.strftime('%Y-%m-%d')}&apikey={FMP_API_KEY}"
+        
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+
+        if 'historical' not in data or not data['historical']:
+            print(f"⚠️ {ticker}의 과거 데이터가 없습니다.")
+            return None
+
+        df = pd.DataFrame(data['historical'])
+        df = df.set_index('date').sort_index()
+        df.index = pd.to_datetime(df.index)
+        df = df[['open', 'high', 'low', 'close', 'volume']]
+        df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        return df
+
+    except Exception as e:
+        print(f"❌ {ticker} 데이터 다운로드 실패: {e}")
+        return None
+
+def get_realtime_data(ticker, timeout=5):
+    """FMP API에서 실시간 데이터를 가져옵니다."""
+    url = f"{FMP_BASE_URL}/quote/{ticker}?apikey={FMP_API_KEY}"
+    try:
+        response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+        if data and 'price' in data[0]:
+            return data[0]
+        return None
+    except Exception as e:
+        print(f"❌ {ticker} 실시간 데이터 가져오기 실패: {e}")
+        return None
+
+def get_ticker_sector_industry(ticker):
+    """FMP API를 통해 티커의 섹터와 산업 정보를 가져옵니다."""
+    try:
+        url = f"{FMP_BASE_URL}/profile/{ticker}?apikey={FMP_API_KEY}"
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        info = response.json()
+        if info:
+            return info[0].get('sector', 'Unknown'), info[0].get('industry', 'Unknown')
+    except Exception as e:
+        print(f"❌ {ticker} 섹터/산업 정보 가져오기 실패: {e}")
+    return 'Unknown', 'Unknown'
+
+# ----------------- 터틀 신호 및 보조 지표 계산 함수 (기존 로직 유지) -----------------
 def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
     """단일 종목에 대한 터틀 트레이딩 신호를 계산합니다."""
     try:
@@ -114,7 +170,6 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
         ticker_data['RSI'] = ta.rsi(ticker_data['Close'], length=14)
         ticker_data['VMA20'] = ta.sma(ticker_data['Volume'], length=20)
         
-        # 지표 계산에 필요한 데이터가 모두 있는지 최종 확인
         required_cols = ['Close', 'High', 'Low', 'Volume', 'ATR', 'ADX', 'MA200', 'RSI', 'VMA20']
         if not all(col in ticker_data.columns for col in required_cols) or ticker_data.iloc[-1].isnull().any():
             return "분석 오류", {}
@@ -129,9 +184,7 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
         last_ma200 = last_row['MA200'] if pd.notna(last_row['MA200']) else 0
         last_rsi = last_row['RSI'] if pd.notna(last_row['RSI']) else 0
         
-        # 20일 신고가 계산 (어제까지)
         last_20_high_prev = ticker_data['High'].iloc[:-1].rolling(20).max().iloc[-1] if len(ticker_data) >= 21 else last_close
-        
         last_10_low = ticker_data['Low'].rolling(10).min().iloc[-1] if len(ticker_data) >= 10 else last_close
 
         avg_volume_20d = ticker_data['Volume'].rolling(window=20).mean().iloc[-1]
@@ -158,7 +211,8 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
             "손절가": round(stop_price * exchange_rate, 0), "손절가_usd": stop_price,
             "매수포함": False, "ADX": last_adx, "+DI": last_plus_di, "-DI": last_minus_di,
             "MA200": last_ma200, "괴리율": disparity_rate, "RSI": last_rsi, "ATR비율": atr_ratio,
-            "volume_krw_billion": (last_volume * last_close * exchange_rate) / 1e8, "거래량비율": volume_ratio
+            "volume_krw_billion": (last_volume * last_close * exchange_rate) / 1e8, "거래량비율": volume_ratio,
+            "매수가능수량": buy_quantity
         }
 
         if units > 0 and last_buy_price is not None:
@@ -177,7 +231,7 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
                 "units": units
             })
             
-        else: # 신규 매수 신호 계산
+        else:
             is_above_ma200 = last_close > last_ma200
             initial_buy_condition = (
                 last_close > last_20_high_prev and
@@ -185,7 +239,6 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
                 vix_value < 30 and
                 last_adx > dynamic_adx_threshold and
                 volume_ratio > VOLUME_THRESHOLD and
-                volume_above_vma and
                 atr_above_avg and
                 last_rsi < 70 and
                 atr_ratio <= dynamic_atr_upper_limit
@@ -202,6 +255,7 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
         print(f"❌ 분석 중 오류: {e}")
         return "오류", {}
 
+# ----------------- 이메일 전송 함수 (기존 로직 유지) -----------------
 def send_email(subject, body):
     """리포트를 이메일로 전송합니다."""
     sender_email = os.getenv("SENDER_EMAIL")
@@ -232,25 +286,7 @@ def send_email(subject, body):
     except Exception as e:
         print(f"❌ 이메일 전송 실패: {e}")
 
-def get_ticker_sector_industry(ticker):
-    """yfinance를 통해 티커의 섹터와 산업 정보를 가져옵니다."""
-    try:
-        info = yf.Ticker(ticker).info
-        return info.get('sector', 'Unknown'), info.get('industry', 'Unknown')
-    except:
-        return 'Unknown', 'Unknown'
-
-def read_positions_file(file_path='positions.csv'):
-    """포지션 파일을 읽어와서 DataFrame으로 반환합니다."""
-    if not os.path.exists(file_path):
-        print(f"⚠️ {file_path} 파일이 없습니다. 빈 포지션으로 시작합니다.")
-        return pd.DataFrame(columns=['ticker', 'buy_date', 'buy_price', 'units'])
-    try:
-        return pd.read_csv(file_path)
-    except Exception as e:
-        print(f"❌ {file_path} 파일 로드 중 오류 발생: {e}")
-        return pd.DataFrame(columns=['ticker', 'buy_date', 'buy_price', 'units'])
-
+# ----------------- 백테스팅 함수 (기존 로직 유지) -----------------
 def backtest_strategy(ticker_data, dynamic_adx_threshold):
     """단순 백테스팅을 통해 전략의 수익률과 최대 낙폭(MDD)을 계산합니다."""
     if not isinstance(ticker_data, pd.DataFrame) or ticker_data.empty or len(ticker_data) < 250:
@@ -269,7 +305,6 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
     signals['20D_High'] = ticker_data['High'].rolling(20).max()
     signals['10D_Low'] = ticker_data['Low'].rolling(10).min()
 
-    # NaN 값 제거
     signals = signals.dropna()
     if signals.empty or len(signals) < 50:
         return None, None
@@ -321,7 +356,7 @@ def generate_detailed_stock_report_html(s, action, indicators):
     """
     target_stop_html = ""
     if action == 'BUY':
-        target_stop_html = f"→ <b>매수 가능 수량</b>: {indicators['매수가능수량']:,}주<br>→ 목표가: ${indicators['목표가_usd']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}"
+        target_stop_html = f"→ <b>매수 가능 수량</b>: {indicators['매수가능수량']:,}주<br>→ 목표가: ${indicators.get('target', 0):.2f}, 손절가: ${indicators.get('stop', 0):.2f}"
     elif action == 'PYRAMID_BUY':
         target_stop_html = f"→ <b>추가 매수 가격</b>: ${indicators['추가매수가_usd']:.2f} (현재 {s['units']} 유닛 보유)<br>→ 손절가: ${indicators['손절가_usd']:.2f}"
     elif action == 'SELL':
@@ -339,50 +374,39 @@ def generate_detailed_stock_report_html(s, action, indicators):
     </li>
     """
 
+def read_positions_file(file_path='positions.csv'):
+    """포지션 파일을 읽어와서 DataFrame으로 반환합니다."""
+    if not os.path.exists(file_path):
+        print(f"⚠️ {file_path} 파일이 없습니다. 빈 포지션으로 시작합니다.")
+        return pd.DataFrame(columns=['ticker', 'buy_date', 'buy_price', 'units'])
+    try:
+        return pd.read_csv(file_path)
+    except Exception as e:
+        print(f"❌ {file_path} 파일 로드 중 오류 발생: {e}")
+        return pd.DataFrame(columns=['ticker', 'buy_date', 'buy_price', 'units'])
+
 # ================ 메인 실행 ==================
 if __name__ == '__main__':
     print("🚀 터틀 트레이딩 리포트 시작...")
     REPORT_TYPE = os.getenv("REPORT_TYPE", "morning_plan")
     
-    session = curl_requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    })
-    
-    EXCHANGE_RATE_KRW_USD = 1395.28
-    try:
-        forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
-        if isinstance(forex_data, pd.DataFrame) and not forex_data.empty and 'Close' in forex_data.columns:
-            EXCHANGE_RATE_KRW_USD = float(forex_data['Close'].iloc[0])
-        else:
-            print("⚠️ 환율 데이터가 비어 있습니다. 기본값 사용")
-    except Exception as e:
-        print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
+    # 환율, VIX, PER 데이터를 FMP API로 가져오도록 수정
+    EXCHANGE_RATE_KRW_USD = get_realtime_data("USD/KRW")
+    EXCHANGE_RATE_KRW_USD = EXCHANGE_RATE_KRW_USD.get('price', 1395.28) if EXCHANGE_RATE_KRW_USD else 1395.28
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 15.69
-    try:
-        vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
-        if isinstance(vix_data, pd.DataFrame) and not vix_data.empty and 'Close' in vix_data.columns:
-            vix_value = float(vix_data['Close'].dropna().iloc[0])
-        else:
-            print("⚠️ VIX 데이터가 비어 있습니다. 기본값 사용")
-    except Exception as e:
-        print(f"⚠️ VIX 가져오기 실패: {e}, 기본값 사용")
+    vix_data = get_realtime_data('^VIX')
+    vix_value = vix_data.get('price', 15.69) if vix_data else 15.69
     print(f"📈 VIX 값: {vix_value:.2f}")
-
-    dynamic_adx_threshold = ADX_THRESHOLD
-    dynamic_atr_upper_limit = ATR_UPPER_LIMIT
-    if vix_value < 20:
-        dynamic_adx_threshold = 19
-    elif vix_value >= 30:
-        dynamic_atr_upper_limit = 4.0
 
     forward_pe = FORWARD_PER
     try:
-        sp500_info = yf.Ticker('^GSPC').info
-        if 'forwardPE' in sp500_info and sp500_info['forwardPE'] is not None:
-            forward_pe = sp500_info['forwardPE']
+        sp500_info_url = f"{FMP_BASE_URL}/profile/%5EGSPC?apikey={FMP_API_KEY}"
+        response = requests.get(sp500_info_url, timeout=5)
+        response.raise_for_status()
+        sp500_info = response.json()
+        if sp500_info and 'forwardPE' in sp500_info[0] and sp500_info[0]['forwardPE'] is not None:
+            forward_pe = sp500_info[0]['forwardPE']
             print(f"✅ S&P 500 전망 PER: {forward_pe:.1f}")
         else:
             print("⚠️ S&P 500 전망 PER 데이터 없음. 기본값 사용")
@@ -408,16 +432,13 @@ if __name__ == '__main__':
 
     for i, ticker in enumerate(all_target_tickers):
         print(f"({i+1}/{len(all_target_tickers)}) 다운로드 중: {ticker}")
-        try:
-            ticker_data = yf.download(ticker, period="1y", auto_adjust=True, session=session, progress=False)
-            if ticker_data is not None and not ticker_data.empty and len(ticker_data) >= 200:
-                data[ticker] = ticker_data
-            else:
-                failed_tickers.append(ticker)
-        except Exception as e:
-            print(f"❌ {ticker} 다운로드 실패: {e}")
+        ticker_data = get_historical_data(ticker)
+        if ticker_data is not None and not ticker_data.empty and len(ticker_data) >= 200:
+            data[ticker] = ticker_data
+        else:
             failed_tickers.append(ticker)
         
+        # API 요청 제한을 위한 대기 시간 추가
         time.sleep(1)
 
     print(f"✅ 성공: {len(data)}개, ❌ 실패: {len(failed_tickers)}개")
@@ -449,20 +470,18 @@ if __name__ == '__main__':
             ind['매수가능수량'] > 0 and
             ind['RSI'] < 70 and
             ind['거래량비율'] > 1 and
-            ind['거래량'] > price_data['VMA20'].iloc[-1] and
             last_atr > avg_atr_20d
         )
     
     for ticker, price_data in data.items():
         try:
-            price_data.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
             sector, industry = get_ticker_sector_industry(ticker)
             
             is_holding = ticker in positions_dict
             last_buy_price = positions_dict[ticker]['buy_price'] if is_holding else None
             units = positions_dict[ticker]['units'] if is_holding else 0
 
-            signal, ind = get_turtle_signal(price_data, vix_value, EXCHANGE_RATE_KRW_USD, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=last_buy_price, units=units)
+            signal, ind = get_turtle_signal(price_data, vix_value, EXCHANGE_RATE_KRW_USD, ADX_THRESHOLD, ATR_UPPER_LIMIT, last_buy_price=last_buy_price, units=units)
 
             if signal == "오류" or signal == "데이터 부족":
                 continue
@@ -470,13 +489,13 @@ if __name__ == '__main__':
             if is_holding:
                 if signal == "PYRAMID_BUY":
                     pyramid_signals.append({
-                        'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'pyramid_price_krw': ind['추가매수가'],
+                        'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'pyramid_price_krw': ind['추가매수가_usd'] * EXCHANGE_RATE_KRW_USD,
                         'units': units, 'sector': sector, 'atr': ind['ATR'], 'atr_ratio': ind['ATR비율'],
                         'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14']
                     })
                 elif signal == "SELL":
                     sell_signals.append({
-                        'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'stop_price_krw': ind['손절가'],
+                        'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'], 'stop_price_krw': ind['손절가_usd'] * EXCHANGE_RATE_KRW_USD,
                         'units': units, 'sector': sector, 'atr': ind['ATR'], 'atr_ratio': ind['ATR비율'],
                         'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14']
                     })
@@ -484,9 +503,9 @@ if __name__ == '__main__':
             if signal == "BUY" and is_a_plus_plus(ind, price_data, sector) and not is_holding:
                 a_plus_plus_list.append({
                     'ticker': ticker, 'close': ind['종가'], 'close_krw': ind['종가_krw'],
-                    'volume_krw': ind['거래량_krw_billion'], 'ATR비율': ind['ATR비율'],
+                    'volume_krw': ind['volume_krw_billion'], 'ATR비율': ind['ATR비율'],
                     'target': ind['목표가_usd'], 'stop': ind['손절가_usd'],
-                    'target_krw': ind['목표가'], 'stop_krw': ind['손절가'],
+                    'target_krw': ind['손절가'], 'stop_krw': ind['손절가'],
                     'quantity': ind['매수가능수량'], '거래량비율': ind['거래량비율'], 'RSI': ind['RSI'],
                     'sector': sector, 'industry': industry,
                     'atr': ind['ATR'], 'ma200': ind['MA200'], '괴리율': ind['괴리율'], 'adx': ind['ADX'], '+di': ind['+DI'], '-di': ind['DMN_14']
@@ -583,9 +602,8 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
 
     disparity_sp500 = 0
     try:
-        sp500_data = yf.download('^GSPC', period="250d", auto_adjust=True, session=session, progress=False)
-        # S&P 500 데이터 로딩 오류 해결을 위한 개선된 로직
-        if isinstance(sp500_data, pd.DataFrame) and not sp500_data.empty and len(sp500_data) >= 200 and 'Close' in sp500_data.columns:
+        sp500_data = get_historical_data('^GSPC')
+        if sp500_data is not None and not sp500_data.empty and len(sp500_data) >= 200 and 'Close' in sp500_data.columns:
             sp500_close = sp500_data['Close'].iloc[-1]
             sp500_ma200 = sp500_data['Close'].rolling(200).mean().iloc[-1]
             if pd.notna(sp500_ma200) and sp500_ma200 > 0:
