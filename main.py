@@ -1,5 +1,5 @@
 # main.py
-import requests
+import yfinance as yf
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
@@ -7,9 +7,10 @@ import pandas_ta as ta
 import os
 import sys
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 import io
 import time
+import requests
 
 # ----------------- 설정값을 외부 파일에서 불러오기 -----------------
 def read_settings(file_path='settings.txt'):
@@ -59,68 +60,34 @@ SECTOR_LIMIT = SETTINGS['SECTOR_LIMIT']
 FORWARD_PER = SETTINGS['FORWARD_PER']
 MAX_UNITS = 4
 
-# ----------------- FMP API 설정 -----------------
-FMP_API_KEY = os.getenv("FMP_API_KEY")
-FMP_BASE_URL = "https://financialmodelingprep.com/api/v3"
-
-if not FMP_API_KEY:
-    print("❌ FMP_API_KEY가 GitHub Secrets에 설정되지 않았습니다. 프로그램을 종료합니다.")
-    sys.exit(1)
-
-# ----------------- 데이터 수집 함수 (FMP API 기반) -----------------
-def get_historical_data(ticker, period="1y"):
-    """FMP API에서 주식 과거 데이터를 가져옵니다."""
+# ----------------- 데이터 수집 함수 (yfinance 기반) -----------------
+def get_historical_data(ticker):
+    """yfinance를 사용하여 주식 과거 데이터를 가져옵니다."""
     try:
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=365 * 2) # 2년치 데이터 요청
-        
-        url = f"{FMP_BASE_URL}/historical-price-full/{ticker}?from={start_date.strftime('%Y-%m-%d')}&to={end_date.strftime('%Y-%m-%d')}&apikey={FMP_API_KEY}"
-        
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-
-        if 'historical' not in data or not data['historical']:
-            print(f"⚠️ {ticker}의 과거 데이터가 없습니다.")
-            return None
-
-        df = pd.DataFrame(data['historical'])
-        df = df.set_index('date').sort_index()
-        df.index = pd.to_datetime(df.index)
-        df = df[['open', 'high', 'low', 'close', 'volume']]
-        df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-        return df
-
-    except Exception as e:
-        print(f"❌ {ticker} 데이터 다운로드 실패: {e}")
-        return None
-
-def get_realtime_data(ticker, timeout=5):
-    """FMP API에서 실시간 데이터를 가져옵니다."""
-    url = f"{FMP_BASE_URL}/quote/{ticker}?apikey={FMP_API_KEY}"
-    try:
-        response = requests.get(url, timeout=timeout)
-        response.raise_for_status()
-        data = response.json()
-        if data and 'price' in data[0]:
-            return data[0]
+        ticker_data = yf.download(ticker, period="2y", auto_adjust=True, progress=False, actions=True)
+        if not ticker_data.empty and len(ticker_data) > 200:
+            return ticker_data
         return None
     except Exception as e:
-        print(f"❌ {ticker} 실시간 데이터 가져오기 실패: {e}")
+        print(f"❌ {ticker} yfinance 다운로드 실패: {e}")
+        return None
+
+def get_realtime_data(ticker):
+    """yfinance를 사용하여 실시간 데이터를 가져옵니다."""
+    try:
+        data = yf.Ticker(ticker).info
+        return data
+    except Exception as e:
+        print(f"❌ {ticker} yfinance 실시간 데이터 가져오기 실패: {e}")
         return None
 
 def get_ticker_sector_industry(ticker):
-    """FMP API를 통해 티커의 섹터와 산업 정보를 가져옵니다."""
+    """yfinance를 통해 티커의 섹터와 산업 정보를 가져옵니다."""
     try:
-        url = f"{FMP_BASE_URL}/profile/{ticker}?apikey={FMP_API_KEY}"
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        info = response.json()
-        if info:
-            return info[0].get('sector', 'Unknown'), info[0].get('industry', 'Unknown')
-    except Exception as e:
-        print(f"❌ {ticker} 섹터/산업 정보 가져오기 실패: {e}")
-    return 'Unknown', 'Unknown'
+        info = yf.Ticker(ticker).info
+        return info.get('sector', 'Unknown'), info.get('industry', 'Unknown')
+    except:
+        return 'Unknown', 'Unknown'
 
 def get_tickers_from_file(file_path='tickers.txt'):
     """로컬 파일에서 티커 목록을 가져옵니다."""
@@ -380,30 +347,27 @@ if __name__ == '__main__':
     print("🚀 터틀 트레이딩 리포트 시작...")
     REPORT_TYPE = os.getenv("REPORT_TYPE", "morning_plan")
     
-    # 환율, VIX, PER 데이터를 FMP API로 가져오도록 수정
-    EXCHANGE_RATE_KRW_USD = get_realtime_data("USD/KRW")
-    EXCHANGE_RATE_KRW_USD = EXCHANGE_RATE_KRW_USD.get('price', 1395.28) if EXCHANGE_RATE_KRW_USD else 1395.28
+    # 환율, VIX, PER 데이터를 yfinance로 가져오도록 수정
+    forex_data = get_realtime_data("KRW=X")
+    EXCHANGE_RATE_KRW_USD = forex_data.get('regularMarketPrice', 1395.28) if forex_data and 'regularMarketPrice' in forex_data else 1395.28
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
     vix_data = get_realtime_data('^VIX')
-    vix_value = vix_data.get('price', 15.69) if vix_data else 15.69
+    vix_value = vix_data.get('regularMarketPrice', 15.69) if vix_data and 'regularMarketPrice' in vix_data else 15.69
     print(f"📈 VIX 값: {vix_value:.2f}")
 
     forward_pe = FORWARD_PER
     try:
-        sp500_info_url = f"{FMP_BASE_URL}/profile/%5EGSPC?apikey={FMP_API_KEY}"
-        response = requests.get(sp500_info_url, timeout=5)
-        response.raise_for_status()
-        sp500_info = response.json()
-        if sp500_info and 'forwardPE' in sp500_info[0] and sp500_info[0]['forwardPE'] is not None:
-            forward_pe = sp500_info[0]['forwardPE']
+        sp500_info = get_realtime_data('^GSPC')
+        if 'forwardPE' in sp500_info and sp500_info['forwardPE'] is not None:
+            forward_pe = sp500_info['forwardPE']
             print(f"✅ S&P 500 전망 PER: {forward_pe:.1f}")
         else:
             print("⚠️ S&P 500 전망 PER 데이터 없음. 기본값 사용")
     except Exception as e:
         print(f"⚠️ S&P 500 전망 PER 가져오기 실패: {e}, 기본값 사용")
         
-    # FMP API 호출 대신 로컬 파일에서 티커 목록을 가져오도록 변경
+    # 로컬 파일에서 티커 목록을 가져오도록 변경
     all_tickers = get_tickers_from_file()
     
     if not all_tickers:
@@ -427,8 +391,8 @@ if __name__ == '__main__':
         else:
             failed_tickers.append(ticker)
         
-        # API 요청 제한을 위한 대기 시간 추가
-        time.sleep(1)
+        # IP 차단을 막기 위해 요청 간에 딜레이 추가
+        time.sleep(5)
 
     print(f"✅ 성공: {len(data)}개, ❌ 실패: {len(failed_tickers)}개")
 
@@ -451,10 +415,10 @@ if __name__ == '__main__':
             return False
             
         return (
-            ind['ADX'] > dynamic_adx_threshold and
+            ind['ADX'] > ADX_THRESHOLD and
             ind['+DI'] > ind['-DI'] and
             ind['종가'] > ind['MA200'] and
-            1.5 <= ind['ATR비율'] <= dynamic_atr_upper_limit and
+            1.5 <= ind['ATR비율'] <= ATR_UPPER_LIMIT and
             ind['거래량비율'] > VOLUME_THRESHOLD and
             ind['매수가능수량'] > 0 and
             ind['RSI'] < 70 and
