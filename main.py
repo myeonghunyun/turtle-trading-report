@@ -349,7 +349,7 @@ if __name__ == '__main__':
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    EXCHANGE_RATE_KRW_USD = 1395.40
+    EXCHANGE_RATE_KRW_USD = 1395.28
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if isinstance(forex_data, pd.DataFrame) and not forex_data.empty and 'Close' in forex_data.columns:
