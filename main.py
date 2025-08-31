@@ -61,108 +61,47 @@ MAX_UNITS = 4
 
 # --- 새로운 데이터 로딩 함수들 (FMP, Alpha Vantage) ---
 def get_stock_data_fmp(ticker):
+    """
+    Financial Modeling Prep API를 사용하여 주식 데이터를 가져옵니다.
+    """
     api_key = os.getenv("FMP_API_KEY")
     if not api_key:
-        print("❌ FMP_API_KEY가 설정되지 않았습니다.")
+        print("❌ FMP_API_KEY가 설정되지 않았습니다. Secrets를 확인하세요.")
         return pd.DataFrame()
     
-    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?apikey={api_key}"
-    try:
-        response = curl_requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
+    # 여러 번의 재시도 로직 추가
+    for attempt in range(3):
+        url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?apikey={api_key}"
+        try:
+            response = curl_requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            if 'historical' not in data or not data['historical']:
+                print(f"⚠️ FMP에서 {ticker}의 데이터가 없습니다. 재시도({attempt+1}/3)")
+                time.sleep(5)
+                continue
+                
+            df = pd.DataFrame(data['historical'])
+            df['date'] = pd.to_datetime(df['date'])
+            df.set_index('date', inplace=True)
+            df.columns = df.columns.str.capitalize()
+            
+            # 1년치 데이터 필터링
+            one_year_ago = datetime.now() - pd.Timedelta(days=365)
+            df = df[df.index >= one_year_ago]
+            
+            return df
         
-        if 'historical' not in data or not data['historical']:
-            print(f"⚠️ FMP에서 {ticker}의 데이터를 찾을 수 없습니다.")
-            return pd.DataFrame()
-        
-        df = pd.DataFrame(data['historical'])
-        df['date'] = pd.to_datetime(df['date'])
-        df.set_index('date', inplace=True)
-        df.sort_index(ascending=True, inplace=True)
-        df.columns = df.columns.str.capitalize()
-        
-        one_year_ago = datetime.now() - pd.Timedelta(days=365)
-        df = df[df.index >= one_year_ago]
-        
-        return df
-    except Exception as e:
-        print(f"❌ FMP API 호출 중 오류 발생: {e}")
-        return pd.DataFrame()
-
-def get_stock_data_av(ticker):
-    api_key = os.getenv("AV_API_KEY")
-    if not api_key:
-        print("❌ AV_API_KEY가 설정되지 않았습니다.")
-        return pd.DataFrame()
-    
-    url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={ticker}&apikey={api_key}&outputsize=full"
-    
-    try:
-        response = curl_requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-
-        if 'Time Series (Daily)' not in data:
-            print(f"⚠️ Alpha Vantage에서 {ticker}의 데이터를 찾을 수 없습니다.")
-            return pd.DataFrame()
-
-        df = pd.DataFrame.from_dict(data['Time Series (Daily)'], orient='index').astype(float)
-        df.index = pd.to_datetime(df.index)
-        df.sort_index(ascending=True, inplace=True)
-        df.rename(columns={'1. open': 'Open', '2. high': 'High', '3. low': 'Low', '4. close': 'Close', '6. volume': 'Volume'}, inplace=True)
-
-        one_year_ago = datetime.now() - pd.Timedelta(days=365)
-        df = df[df.index >= one_year_ago]
-
-        return df
-    except Exception as e:
-        print(f"❌ Alpha Vantage API 호출 중 오류 발생: {e}")
-        return pd.DataFrame()
-
-# --- 데이터 로딩 우선순위 로직 ---
-def get_stock_data_with_fallback(ticker):
-    """FMP를 우선 사용하고, 실패 시 Alpha Vantage를 백업으로 사용합니다."""
-    data = get_stock_data_fmp(ticker)
-    if data.empty or len(data) < 200:
-        print(f"🔄 FMP 데이터 로딩 실패. Alpha Vantage로 재시도합니다.")
-        time.sleep(1) # API 요청 간 딜레이
-        data = get_stock_data_av(ticker)
-    return data
-
-# --- 기존 함수들과 동일한 내용 ---
-def get_index_tickers(index_name):
-    # ... (기존 코드와 동일)
-    if index_name == 'sp500':
-        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        possible_cols = ['Symbol', 'Ticker symbol', 'Ticker']
-    elif index_name == 'nasdaq100':
-        url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
-        possible_cols = ['Ticker', 'Ticker symbol', 'Company']
-    else:
-        print(f"❌ 지원하지 않는 인덱스: {index_name}")
-        return []
-
-    try:
-        html_content = curl_requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}).text
-        tables = pd.read_html(io.StringIO(html_content))
-        for table in tables:
-            for col in possible_cols:
-                if col in table.columns:
-                    tickers = table[col].dropna().astype(str).tolist()
-                    tickers = [t.strip() for t in tickers if isinstance(t, str) and 1 <= len(t) <= 10 and t != 'nan']
-                    tickers = [t.replace('.', '-') for t in tickers]
-                    print(f"✅ {index_name} 티커 {len(tickers)}개 로드 완료.")
-                    return tickers
-        print(f"❌ {index_name} 티커를 찾을 수 없습니다.")
-        return []
-    except Exception as e:
-        print(f"❌ {index_name} 티커 추출 실패: {e}")
-        return []
+        except Exception as e:
+            print(f"❌ FMP API 호출 중 오류 발생: {e}. 재시도({attempt+1}/3)")
+            time.sleep(5)
+            continue
+            
+    return pd.DataFrame()
 
 def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_threshold, dynamic_atr_upper_limit, last_buy_price=None, units=0):
-    # ... (기존 코드와 동일, 내용은 너무 길어서 생략합니다.)
-    # (기존 get_turtle_signal 함수 내용)
+    """단일 종목에 대한 터틀 트레이딩 신호를 계산합니다."""
     try:
         if not isinstance(ticker_data, pd.DataFrame) or ticker_data.empty or len(ticker_data) < 200:
             return "데이터 부족", {}
@@ -275,10 +214,8 @@ def get_turtle_signal(ticker_data, vix_value, exchange_rate, dynamic_adx_thresho
         print(f"❌ 분석 중 오류: {e}")
         return "오류", {}
 
-# --- 나머지 함수들은 동일한 내용으로 유지됩니다. ---
-
 def send_email(subject, body):
-    # ... (send_email 함수 내용)
+    """리포트를 이메일로 전송합니다."""
     sender_email = os.getenv("SENDER_EMAIL")
     sender_password = os.getenv("GMAIL_APP_PASSWORD")
     
@@ -308,7 +245,7 @@ def send_email(subject, body):
         print(f"❌ 이메일 전송 실패: {e}")
 
 def get_ticker_sector_industry(ticker):
-    # ... (get_ticker_sector_industry 함수 내용)
+    """yfinance를 통해 티커의 섹터와 산업 정보를 가져옵니다."""
     try:
         info = yf.Ticker(ticker).info
         return info.get('sector', 'Unknown'), info.get('industry', 'Unknown')
@@ -316,7 +253,7 @@ def get_ticker_sector_industry(ticker):
         return 'Unknown', 'Unknown'
 
 def read_positions_file(file_path='positions.csv'):
-    # ... (read_positions_file 함수 내용)
+    """포지션 파일을 읽어와서 DataFrame으로 반환합니다."""
     if not os.path.exists(file_path):
         print(f"⚠️ {file_path} 파일이 없습니다. 빈 포지션으로 시작합니다.")
         return pd.DataFrame(columns=['ticker', 'buy_date', 'buy_price', 'units'])
@@ -327,7 +264,7 @@ def read_positions_file(file_path='positions.csv'):
         return pd.DataFrame(columns=['ticker', 'buy_date', 'buy_price', 'units'])
 
 def backtest_strategy(ticker_data, dynamic_adx_threshold):
-    # ... (backtest_strategy 함수 내용)
+    """단순 백테스팅을 통해 전략의 수익률과 최대 낙폭(MDD)을 계산합니다."""
     if not isinstance(ticker_data, pd.DataFrame) or ticker_data.empty or len(ticker_data) < 250:
         return None, None
 
@@ -391,7 +328,9 @@ def backtest_strategy(ticker_data, dynamic_adx_threshold):
     return None, None
 
 def generate_detailed_stock_report_html(s, action, indicators):
-    # ... (generate_detailed_stock_report_html 함수 내용)
+    """
+    주식 매매 리포트의 HTML 항목을 생성하는 함수
+    """
     target_stop_html = ""
     if action == 'BUY':
         target_stop_html = f"→ <b>매수 가능 수량</b>: {indicators['매수가능수량']:,}주<br>→ 목표가: ${indicators['목표가_usd']:.2f}, 손절가: ${indicators['손절가_usd']:.2f}"
@@ -421,8 +360,8 @@ if __name__ == '__main__':
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
-
-    EXCHANGE_RATE_KRW_USD = 1395.40
+    
+    EXCHANGE_RATE_KRW_USD = 1391.16
     try:
         forex_data = yf.download("KRW=X", period="1d", auto_adjust=True, session=session, progress=False)
         if isinstance(forex_data, pd.DataFrame) and not forex_data.empty and 'Close' in forex_data.columns:
@@ -433,7 +372,7 @@ if __name__ == '__main__':
         print(f"⚠️ 환율 가져오기 실패: {e}, 기본값 사용")
     print(f"💱 실시간 환율: 1 USD = {EXCHANGE_RATE_KRW_USD:,.2f} KRW")
 
-    vix_value = 15.69
+    vix_value = 16.60
     try:
         vix_data = yf.download('^VIX', period="5d", auto_adjust=True, session=session, progress=False)
         if isinstance(vix_data, pd.DataFrame) and not vix_data.empty and 'Close' in vix_data.columns:
@@ -617,7 +556,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     report_body += """
     <h2>📌 실전 거래량 비율 판단 가이드</h2>
     <p><b>거래량비율</b>은 "오늘 거래량이 평소보다 몇 배 늘었는가?"를 보여줍니다.<br/>
-    이 수치는 시장의 관심과 변동성의 전조를 파악하는 핵심 지표입니다。</p>
+    이 수치는 시장의 관심과 변동성의 전조를 파악하는 핵심 지표입니다.</p>
 
     <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; font-size: 14px;">
         <tr style="background-color: #f2f2f2;">
@@ -692,6 +631,12 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
             <td>{disparity_sp500:+.1f}%</td>
             <td>> +10%: 과열<br>< -10%: 저평가</td>
             <td>{'🔴 과열' if disparity_sp500 > 10 else '🟢 정상' if disparity_sp500 > -10 else '🔴 저평가'}</td>
+        </tr>
+        <tr>
+            <td><b>ATR 평균</b></td>
+            <td>{avg_atr_ratio:.2f}%</td>
+            <td>1~3% 양호<br>> 3% 고변동성</td>
+            <td>{'🟢 양호' if avg_atr_ratio < 3 else '🟠 고변동성'}</td>
         </tr>
         <tr>
             <td><b>전망 PER</b></td>
