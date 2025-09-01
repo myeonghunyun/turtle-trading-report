@@ -1,8 +1,8 @@
-# .github/workflows/blank.yml
 name: Turtle Trading Report
 
 on:
   schedule:
+    # 한국 시간으로 오전 7시, 오후 9시에 실행 (UTC 기준)
     - cron: '0 22,12 * * *'
   workflow_dispatch:
     inputs:
@@ -47,8 +47,22 @@ jobs:
             echo "report_type=evening_realtime" >> $GITHUB_OUTPUT
           fi
 
+      # 🚨🚨🚨 디버깅을 위한 환경 변수 출력 단계 (임시) 🚨🚨🚨
+      - name: Debug secrets
+        env:
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+        run: |
+          echo "SENDER_EMAIL is set: ${{ env.SENDER_EMAIL != '' }}"
+          echo "GMAIL_APP_PASSWORD is set: ${{ env.GMAIL_APP_PASSWORD != '' }}"
+          echo "RECEIVER_EMAIL is set: ${{ env.RECEIVER_EMAIL != '' }}"
+
       - name: Run Turtle Trading Script
         env:
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
           REPORT_TYPE: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type) || steps.set_report_type.outputs.report_type }}
         run: |
           python main.py
