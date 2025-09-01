@@ -65,7 +65,8 @@ def get_historical_data(ticker):
     """yfinance를 사용하여 주식 과거 데이터를 가져옵니다."""
     try:
         ticker_data = yf.download(ticker, period="2y", auto_adjust=True, progress=False, actions=True)
-        if not ticker_data.empty and len(ticker_data) > 200:
+        # 데이터프레임 유효성 검사를 더욱 강화
+        if isinstance(ticker_data, pd.DataFrame) and not ticker_data.empty and len(ticker_data) >= 200:
             return ticker_data
         return None
     except Exception as e:
@@ -217,17 +218,14 @@ def send_email(subject, body):
     """리포트를 이메일로 전송합니다."""
     sender_email = os.getenv("SENDER_EMAIL")
     sender_password = os.getenv("GMAIL_APP_PASSWORD")
-    
     receiver_emails_str = os.getenv("RECEIVER_EMAIL")
-    if not receiver_emails_str:
+    
+    # 이메일 관련 Secrets가 모두 유효한지 확인
+    if not all([sender_email, sender_password, receiver_emails_str]):
         print("❌ 이메일 설정이 누락되었습니다. Secrets를 확인하세요.")
         return
         
     receiver_emails = [email.strip() for email in receiver_emails_str.split(',')]
-
-    if not all([sender_email, sender_password]):
-        print("❌ 이메일 설정이 누락되었습니다. Secrets를 확인하세요.")
-        return
 
     body_clean = body.replace('\xa0', ' ').replace('\u00A0', ' ')
     msg = MIMEText(body_clean, 'html', _charset='utf-8')
@@ -556,7 +554,7 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
     disparity_sp500 = 0
     try:
         sp500_data = get_historical_data('^GSPC')
-        if sp500_data is not None and not sp500_data.empty and len(sp500_data) >= 200 and 'Close' in sp500_data.columns:
+        if sp500_data is not None and isinstance(sp500_data, pd.DataFrame) and not sp500_data.empty and len(sp500_data) >= 200 and 'Close' in sp500_data.columns:
             sp500_close = sp500_data['Close'].iloc[-1]
             sp500_ma200 = sp500_data['Close'].rolling(200).mean().iloc[-1]
             if pd.notna(sp500_ma200) and sp500_ma200 > 0:
