@@ -356,14 +356,15 @@ if __name__ == '__main__':
 
     forward_pe = FORWARD_PER
     try:
-        sp500_info = get_realtime_data('^GSPC')
+        # S&P 500 전망 PER은 SPY 데이터를 사용하여 가져옴
+        sp500_info = get_realtime_data('SPY') 
         if 'forwardPE' in sp500_info and sp500_info['forwardPE'] is not None:
             forward_pe = sp500_info['forwardPE']
-            print(f"✅ S&P 500 전망 PER: {forward_pe:.1f}")
+            print(f"✅ SPY 전망 PER: {forward_pe:.1f}")
         else:
-            print("⚠️ S&P 500 전망 PER 데이터 없음. 기본값 사용")
+            print("⚠️ SPY 전망 PER 데이터 없음. 기본값 사용")
     except Exception as e:
-        print(f"⚠️ S&P 500 전망 PER 가져오기 실패: {e}, 기본값 사용")
+        print(f"⚠️ SPY 전망 PER 가져오기 실패: {e}, 기본값 사용")
         
     # 로컬 파일에서 티커 목록을 가져오도록 변경
     all_tickers = get_tickers_from_file()
@@ -553,16 +554,16 @@ ATR 비율 1~3% 양호, 3% 이상 고변동성
 
     disparity_sp500 = 0
     try:
-        sp500_data = get_historical_data('^GSPC')
+        sp500_data = get_historical_data('SPY') 
         if sp500_data is not None and isinstance(sp500_data, pd.DataFrame) and not sp500_data.empty and len(sp500_data) >= 200 and 'Close' in sp500_data.columns:
             sp500_close = sp500_data['Close'].iloc[-1]
             sp500_ma200 = sp500_data['Close'].rolling(200).mean().iloc[-1]
             if pd.notna(sp500_ma200) and sp500_ma200 > 0:
                 disparity_sp500 = (sp500_close / sp500_ma200 - 1) * 100
         else:
-            print("⚠️ S&P 500 데이터가 유효하지 않거나 부족합니다. 괴리율 계산을 건너뜁니다.")
+            print("⚠️ SPY 데이터가 유효하지 않거나 부족합니다. 괴리율 계산을 건너뜁니다.")
     except Exception as e:
-        print(f"⚠️ S&P 500 데이터 가져오기 실패: {e}")
+        print(f"⚠️ SPY 데이터 가져오기 실패: {e}")
         disparity_sp500 = 0
 
     atr_ratios = [s['ATR비율'] for s in a_plus_plus_list if 'ATR비율' in s]
